@@ -16,7 +16,7 @@
     "cpu": "Apple M4 Max"
   },
   "config": {
-    "codictatePath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate",
+    "codictatePath": "<codictate>",
     "datasets": [
       "test-clean"
     ],
@@ -40,7 +40,7 @@
         {
           "id": "4970-29095-0017",
           "warmup": true,
-          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/4970-29095-0017.wav",
+          "audioPath": "librispeech/wav/test-clean/4970-29095-0017.wav",
           "audioDurationSec": 3.93,
           "language": "en",
           "reference": "THE SIGHT SEERS RETURNED IN HIGH SPIRITS FROM THE CITY",
@@ -60,7 +60,7 @@
         {
           "id": "6829-68771-0013",
           "warmup": true,
-          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/6829-68771-0013.wav",
+          "audioPath": "librispeech/wav/test-clean/6829-68771-0013.wav",
           "audioDurationSec": 7.19,
           "language": "en",
           "reference": "THE ATTENDANCE WAS UNEXPECTEDLY LARGE AND THE GIRLS WERE DELIGHTED FORESEEING GREAT SUCCESS FOR THEIR FETE",
@@ -80,7 +80,7 @@
         {
           "id": "2830-3980-0042",
           "warmup": true,
-          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/2830-3980-0042.wav",
+          "audioPath": "librispeech/wav/test-clean/2830-3980-0042.wav",
           "audioDurationSec": 3.02,
           "language": "en",
           "reference": "THE WORLD BRANDS THIS A PERNICIOUS DOCTRINE",
@@ -100,7 +100,7 @@
         {
           "id": "908-31957-0014",
           "warmup": false,
-          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/908-31957-0014.wav",
+          "audioPath": "librispeech/wav/test-clean/908-31957-0014.wav",
           "audioDurationSec": 7.56,
           "language": "en",
           "reference": "A RING OF AMETHYST I COULD NOT WEAR HERE PLAINER TO MY SIGHT THAN THAT FIRST KISS",

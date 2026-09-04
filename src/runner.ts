@@ -10,11 +10,20 @@ import { buildManifest } from "./manifest";
 import { computeCer, computeWer, type CerResult, type WerResult } from "./scoring";
 import { DATASET_IDS, type DatasetId, type ManifestEntry, type ProductMetadata } from "./types";
 import { buildCodictateCheckpoint, buildCodictateResults } from "./codictate-compat";
+import {
+  CODICTATE_PATH_PLACEHOLDER,
+  datasetsRoot,
+  portableRun,
+} from "./portable-paths";
 
 const WARMUP_COUNT = 3;
 const DEFAULT_TIMEOUT_BUDGET_MS = 30_000;
 
 interface RunConfig {
+  /**
+   * Absolute path to the Codictate checkout in memory; serialised as
+   * `<codictate>` so a committed run does not name the machine that made it.
+   */
   codictatePath: string;
   datasets: DatasetId[];
   samples: number;
@@ -111,7 +120,7 @@ async function main(): Promise<void> {
     runDir = resolve(options.resume);
     run = JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")) as BenchmarkRun;
     if (run.status === "completed") throw new Error(`Run already completed: ${runDir}`);
-    run.config = withTimeoutBudget(run.config);
+    run.config = withCodictatePath(withTimeoutBudget(run.config), options.config.codictatePath);
   } else {
     if (!options.name) throw new Error("--name is required for a new run");
     const runId = `${timestamp()}_${slug(options.name)}`;
@@ -253,8 +262,19 @@ function withTimeoutBudget(config: RunConfig): RunConfig {
   return { ...config, timeoutBudgetMs: DEFAULT_TIMEOUT_BUDGET_MS };
 }
 
+/**
+ * Restores the checkout path that serialisation strips out, so a resumed run
+ * can still locate the audio it has left to play.
+ */
+function withCodictatePath(config: RunConfig, checkout: string): RunConfig {
+  if (config.codictatePath !== CODICTATE_PATH_PLACEHOLDER) {
+    return { ...config, codictatePath: resolve(config.codictatePath) };
+  }
+  return { ...config, codictatePath: checkout };
+}
+
 function buildPlan(config: RunConfig): Map<DatasetId, ManifestEntry[]> {
-  const datasetsDir = join(config.codictatePath, "benchmarks", "datasets");
+  const datasetsDir = datasetsRoot(config.codictatePath);
   if (!existsSync(datasetsDir)) throw new Error(`Codictate benchmark data missing: ${datasetsDir}`);
   const plan = new Map<DatasetId, ManifestEntry[]>();
   for (const dataset of config.datasets) {
@@ -304,7 +324,7 @@ function sum<T>(items: T[], select: (item: T) => number): number {
 
 function saveRun(runDir: string, run: BenchmarkRun): void {
   run.updatedAt = new Date().toISOString();
-  writeJsonAtomically(join(runDir, "results.json"), run);
+  writeJsonAtomically(join(runDir, "results.json"), portableRun(run));
 }
 
 function saveCheckpoint(runDir: string, run: BenchmarkRun, currentDataset?: DatasetId): void {

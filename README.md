@@ -121,6 +121,12 @@ Runner writes two atomic progress files after every finished clip:
 - `results.json` preserves every hypothesis, error operation, latency, and status. Resume uses this file.
 - `checkpoint.json` mirrors Codictate's completed-dataset and in-progress aggregate layout. It is removed only after successful completion.
 
+Recorded paths are portable, because runs are committed here: `audioPath` is
+relative to the Codictate datasets root (`fleurs/da_dk/audio/test/<hash>.wav`,
+`librispeech/wav/test-clean/<id>.wav`) and `config.codictatePath` is written as
+`<codictate>`. Resuming points that placeholder back at `../codictate`, or at
+whatever `--codictate` supplies.
+
 Resume interrupted run without repeating finished clips:
 
 ```bash

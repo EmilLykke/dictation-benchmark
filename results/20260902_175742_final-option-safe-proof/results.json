@@ -16,7 +16,7 @@
     "cpu": "Apple M4 Max"
   },
   "config": {
-    "codictatePath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate",
+    "codictatePath": "<codictate>",
     "datasets": [
       "test-clean"
     ],

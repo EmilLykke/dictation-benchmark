@@ -19,7 +19,7 @@
     "osVersion": "26.6.2"
   },
   "config": {
-    "codictatePath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate",
+    "codictatePath": "<codictate>",
     "datasets": [
       "test-clean"
     ],
@@ -43,7 +43,7 @@
         {
           "id": "4970-29095-0017",
           "warmup": true,
-          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/4970-29095-0017.wav",
+          "audioPath": "librispeech/wav/test-clean/4970-29095-0017.wav",
           "audioDurationSec": 3.93,
           "language": "en",
           "reference": "THE SIGHT SEERS RETURNED IN HIGH SPIRITS FROM THE CITY",
