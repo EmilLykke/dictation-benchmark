@@ -7,6 +7,7 @@ import {
   CURSOR_CACHE_FILE,
   deriveCursors,
   formatPlanLine,
+  fromIndexError,
   ManifestFingerprintMismatch,
   manifestFingerprint,
   planDataset,
@@ -220,6 +221,165 @@ describe("--to is a target depth", () => {
     expect(plan.clips).toHaveLength(0);
     expect(plan.startIndex).toBe(30);
     expect(plan.endIndex).toBe(30);
+  });
+});
+
+describe("--from is an explicit start index", () => {
+  test("it overrides the cursor for this run only", () => {
+    const entries = manifest(1000);
+    const withCursor = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 });
+    const rewound = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 }, 0);
+
+    expect(withCursor.startIndex).toBe(397);
+    // Same cursor, same depth flag: the only difference is that `--from` was given.
+    expect(rewound.cursor).toBe(397);
+    expect(rewound.startIndex).toBe(0);
+    expect(rewound.endIndex).toBe(400);
+    expect(rewound.fromIndex).toBe(0);
+    expect(rewound.rewind).toBe(true);
+    expect(rewound.clips[0].id).toBe(`clip-${WARMUP_COUNT}`);
+  });
+
+  test("a delta is counted from --from, not from the cursor", () => {
+    const entries = manifest(1000);
+    const plan = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 }, 0);
+
+    expect(plan.startIndex).toBe(0);
+    expect(plan.endIndex).toBe(400);
+    expect(plan.clips).toHaveLength(400);
+  });
+
+  test("a target is still a depth, so --from 0 --to 400 is the same range", () => {
+    const entries = manifest(1000);
+    const delta = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 }, 0);
+    const target = planDataset("hu_hu", entries, 397, { kind: "target", to: 400 }, 0);
+
+    expect(target.startIndex).toBe(0);
+    expect(target.endIndex).toBe(400);
+    // The whole point of documenting both spellings: they name the same 400 clips.
+    expect(target.clips.map((entry) => entry.id)).toEqual(delta.clips.map((entry) => entry.id));
+  });
+
+  test("--to below --from selects nothing rather than running backwards", () => {
+    const entries = manifest(1000);
+    const plan = planDataset("hu_hu", entries, 397, { kind: "target", to: 200 }, 500);
+
+    expect(plan.clips).toHaveLength(0);
+    expect(plan.endIndex).toBe(500);
+    expect(formatPlanLine(plan)).toBe(
+      "hu_hu: nothing to run: --from 500 with depth 200 selects no clips (cursor stays 397)",
+    );
+  });
+
+  test("the plan preview marks a rewind, names the cursor it overrode and promises it", () => {
+    const entries = manifest(905);
+    const plan = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 }, 0);
+
+    // The one genuinely destructive path in the harness, so it must not be readable as
+    // the ordinary `cursor A -> B` line. The arrow runs backwards, the flag is named
+    // beside the cursor it overrode, and 397 is spelled out as clips being re-spent.
+    expect(formatPlanLine(plan)).toBe(
+      "hu_hu: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of 902 consumable, " +
+        "397 of them already measured; cursor ends at 400, never lower than 397)",
+    );
+  });
+
+  test("the preview marks a start past the cursor as a gap, not as a rewind", () => {
+    const entries = manifest(905);
+    const plan = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 100 }, 500);
+
+    expect(plan.rewind).toBe(false);
+    expect(plan.gap).toBe(true);
+    expect(formatPlanLine(plan)).toBe(
+      "hu_hu: GAP --from 500 starts past cursor 397 (clips 501-600 of 902 consumable, " +
+        "leaving clips 398-500 unmeasured; cursor ends at 600)",
+    );
+  });
+
+  test("a forward run without --from prints exactly the line it always printed", () => {
+    const entries = manifest(905);
+
+    expect(formatPlanLine(planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 }))).toBe(
+      "hu_hu: cursor 397 -> 797 (clips 398-797 of 902 consumable, 105 remaining after)",
+    );
+  });
+
+  test("a rewound run records its range like any other and never lowers the cursor", () => {
+    const entries = manifest(905);
+    const forward = planDataset("hu_hu", entries, 0, { kind: "target", to: 397 });
+    const rewound = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 400 }, 0);
+    const root = resultsTree([
+      {
+        runId: "20260904_000000_first-397",
+        datasets: { hu_hu: selectionFor(forward, forward.clips.length) },
+      },
+      {
+        runId: "20260905_000000_rewound-400",
+        datasets: { hu_hu: selectionFor(rewound, rewound.clips.length) },
+      },
+    ]);
+
+    const recorded = selectionFor(rewound, rewound.clips.length);
+
+    expect(recorded.startIndex).toBe(0);
+    expect(recorded.endIndex).toBe(400);
+    // The cursor is the maximum endIndex across runs, so re-measuring [0, 400) over a
+    // cursor of 397 leaves it at 400. Nothing rewrites the 397 run and nothing subtracts.
+    expect(cursorsFrom(root, { hu_hu: entries }).get("hu_hu")).toBe(400);
+  });
+
+  test("a shallow rewind leaves the cursor exactly where it was", () => {
+    const entries = manifest(905);
+    const forward = planDataset("hu_hu", entries, 0, { kind: "target", to: 397 });
+    const shallow = planDataset("hu_hu", entries, 397, { kind: "delta", samples: 200 }, 0);
+    const root = resultsTree([
+      {
+        runId: "20260904_000000_first-397",
+        datasets: { hu_hu: selectionFor(forward, forward.clips.length) },
+      },
+      {
+        runId: "20260905_000000_rewound-200",
+        datasets: { hu_hu: selectionFor(shallow, shallow.clips.length) },
+      },
+    ]);
+
+    expect(shallow.cursorAfter).toBe(397);
+    expect(cursorsFrom(root, { hu_hu: entries }).get("hu_hu")).toBe(397);
+  });
+});
+
+describe("--from validation", () => {
+  const counts = new Map([
+    ["test-clean", 2617],
+    ["hu_hu", 902],
+  ]);
+
+  test("an index inside every selected dataset is accepted", () => {
+    expect(fromIndexError(0, counts)).toBeNull();
+    expect(fromIndexError(901, counts)).toBeNull();
+  });
+
+  test("an index past a dataset's consumable count is rejected by name and count", () => {
+    // Clamping is what makes this dangerous: `--from 5000` would otherwise measure
+    // nothing and record a depth of 902.
+    expect(fromIndexError(902, counts)).toBe(
+      "--from 902 is out of range for hu_hu: it has 902 consumable clips, so the valid --from indices are 0-901.",
+    );
+    expect(fromIndexError(5000, counts)).toBe(
+      "--from 5000 is out of range for test-clean: it has 2617 consumable clips, so the valid --from indices are 0-2616.",
+    );
+  });
+
+  test("a negative index is rejected", () => {
+    expect(fromIndexError(-1, counts)).toBe(
+      "--from must be a non-negative integer index into the consumable range, got -1.",
+    );
+  });
+
+  test("a dataset with nothing consumable says so rather than naming an index range", () => {
+    expect(fromIndexError(0, new Map([["tiny", 0]]))).toBe(
+      "--from 0 is out of range for tiny: it has 0 consumable clips, so there is nothing for --from to point at.",
+    );
   });
 });
 

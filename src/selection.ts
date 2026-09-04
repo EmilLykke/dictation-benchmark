@@ -173,26 +173,64 @@ export interface DatasetPlan {
   consumableCount: number;
   /** Consumable entries already measured for this product before this run. */
   cursor: number;
+  /**
+   * The `--from N` override, or `null` when the cursor picked the start.
+   *
+   * Kept on the plan so the preview can say a start index was *imposed* rather than
+   * derived. Every other flag can only ever push the range forward; this is the one
+   * that can point it at clips already paid for, and a reader of the preview has to
+   * be able to see which of the two happened.
+   */
+  fromIndex: number | null;
   startIndex: number;
   /** Half-open planned end, already clamped to `consumableCount`. */
   endIndex: number;
   requestedEndIndex: number;
   truncated: boolean;
+  /**
+   * True when `--from` starts inside the measured prefix, so this run re-measures
+   * clips this product has already been measured on. The only genuinely destructive
+   * path in the harness, and the reason `formatPlanLine` has a branch for it.
+   */
+  rewind: boolean;
+  /**
+   * True when `--from` starts *past* the cursor, leaving `[cursor, startIndex)`
+   * unmeasured while the depth this run records jumps over it. Not a rewind, but the
+   * mirror-image hazard: a claimed depth over clips nobody transcribed.
+   */
+  gap: boolean;
+  /**
+   * The cursor this run leaves behind, `max(cursor, endIndex)`.
+   *
+   * The cursor is the maximum recorded `endIndex` across runs (see `deriveCursors`),
+   * so a rewind can only ever raise it or leave it alone. Precomputed here so the
+   * preview can promise that in the same line that announces the rewind.
+   */
+  cursorAfter: number;
   /** Replayed unscored at the start of the dataset. Always the same three clips. */
   warmups: ManifestEntry[];
   /** The consumable slice `[startIndex, endIndex)`. Empty means "nothing to do". */
   clips: ManifestEntry[];
 }
 
+/**
+ * Turns a cursor, a depth and an optional explicit start into the range to run.
+ *
+ * `fromIndex` is `--from N`: the start index this run uses *instead of* the cursor,
+ * for this run only. Nothing is written back and no cursor is edited — the override
+ * exists so the same clips can be measured twice, which is the only way to tell a
+ * real change apart from a change of sample.
+ */
 export function planDataset(
   dataset: string,
   entries: readonly ManifestEntry[],
   cursor: number,
   request: DepthRequest,
+  fromIndex?: number,
 ): DatasetPlan {
   const consumable = consumableEntries(entries);
   const consumableCount = consumable.length;
-  const start = Math.min(cursor, consumableCount);
+  const start = Math.min(fromIndex ?? cursor, consumableCount);
   const requestedEndIndex = request.kind === "delta" ? start + request.samples : request.to;
   const endIndex = Math.max(start, Math.min(requestedEndIndex, consumableCount));
   return {
@@ -201,13 +239,51 @@ export function planDataset(
     manifestEntryCount: entries.length,
     consumableCount,
     cursor,
+    fromIndex: fromIndex ?? null,
     startIndex: start,
     endIndex,
     requestedEndIndex,
     truncated: requestedEndIndex > consumableCount,
+    rewind: fromIndex !== undefined && start < cursor,
+    gap: fromIndex !== undefined && start > cursor,
+    cursorAfter: Math.max(cursor, endIndex),
     warmups: warmupEntries(entries),
     clips: consumable.slice(start, endIndex),
   };
+}
+
+/**
+ * Rejects a `--from N` no selected dataset can honour, naming the dataset and its
+ * consumable count.
+ *
+ * Checked rather than clamped. Every other offset in this module is derived from a
+ * recorded range and is therefore inside the pool by construction; `--from` is typed
+ * by a human, so `--from 5000` on a 902-clip pool would otherwise silently measure
+ * nothing and record a depth of 902. Returns the message rather than throwing so the
+ * bound can be unit-tested without a results tree.
+ */
+export function fromIndexError(
+  fromIndex: number,
+  consumableCounts: ReadonlyMap<string, number>,
+): string | null {
+  if (!Number.isInteger(fromIndex) || fromIndex < 0) {
+    return `--from must be a non-negative integer index into the consumable range, got ${fromIndex}.`;
+  }
+  for (const [dataset, consumableCount] of consumableCounts) {
+    if (consumableCount === 0) {
+      return (
+        `--from ${fromIndex} is out of range for ${dataset}: it has 0 consumable clips, ` +
+        `so there is nothing for --from to point at.`
+      );
+    }
+    if (fromIndex >= consumableCount) {
+      return (
+        `--from ${fromIndex} is out of range for ${dataset}: it has ${consumableCount} ` +
+        `consumable clips, so the valid --from indices are 0-${consumableCount - 1}.`
+      );
+    }
+  }
+  return null;
 }
 
 /** Rebuilds a plan from a range a run already recorded, for `--resume`. */
@@ -223,10 +299,16 @@ export function resumePlan(
     manifestEntryCount: entries.length,
     consumableCount: consumable.length,
     cursor: selection.startIndex,
+    // A resume replays a range that is already on disk, so there is nothing to
+    // override and nothing to warn about: `--from` is refused alongside `--resume`.
+    fromIndex: null,
     startIndex: selection.startIndex,
     endIndex: selection.plannedEndIndex,
     requestedEndIndex: selection.requestedEndIndex,
     truncated: selection.truncated,
+    rewind: false,
+    gap: false,
+    cursorAfter: Math.max(selection.startIndex, selection.plannedEndIndex),
     warmups: warmupEntries(entries),
     clips: consumable.slice(selection.startIndex, selection.plannedEndIndex),
   };
@@ -253,19 +335,45 @@ export function selectionFor(plan: DatasetPlan, measured: number): DatasetSelect
  * Printed for every dataset before any clip runs, because `--samples` is a delta and
  * therefore destructive by default: running the same command twice consumes twice.
  * An operator has to be able to see which clips a command is about to spend.
+ *
+ * A `--from` rewind gets its own shape rather than the same shape with different
+ * numbers. It is the one path that spends clips already paid for, so it says so in
+ * words — the arrow runs backwards, the flag is named next to the cursor it overrode,
+ * and the count of clips being measured a second time is spelled out. A reader
+ * skimming for the usual `cursor A -> B` cannot mistake it for a forward run.
  */
 export function formatPlanLine(plan: DatasetPlan): string {
   const remaining = plan.consumableCount - plan.endIndex;
   if (plan.clips.length === 0) {
+    if (plan.fromIndex !== null) {
+      return (
+        `${plan.dataset}: nothing to run: --from ${plan.fromIndex} with depth ` +
+        `${plan.requestedEndIndex} selects no clips (cursor stays ${plan.cursor})`
+      );
+    }
     const reason = plan.startIndex >= plan.consumableCount
       ? `all ${plan.consumableCount} consumable clips already measured`
       : `already at or past depth ${plan.requestedEndIndex} of ${plan.consumableCount} consumable`;
     return `${plan.dataset}: cursor ${plan.cursor} -> ${plan.endIndex} (nothing to run: ${reason})`;
   }
-  const line =
-    `${plan.dataset}: cursor ${plan.cursor} -> ${plan.endIndex}` +
-    ` (clips ${plan.startIndex + 1}-${plan.endIndex} of ${plan.consumableCount} consumable,` +
-    ` ${remaining} remaining after)`;
+  const clips = `clips ${plan.startIndex + 1}-${plan.endIndex} of ${plan.consumableCount} consumable`;
+  let line: string;
+  if (plan.rewind) {
+    const again = Math.min(plan.endIndex, plan.cursor) - plan.startIndex;
+    line =
+      `${plan.dataset}: REWIND cursor ${plan.cursor} -> --from ${plan.fromIndex}` +
+      ` (re-measuring ${clips}, ${again} of them already measured;` +
+      ` cursor ends at ${plan.cursorAfter}, never lower than ${plan.cursor})`;
+  } else if (plan.gap) {
+    line =
+      `${plan.dataset}: GAP --from ${plan.fromIndex} starts past cursor ${plan.cursor}` +
+      ` (${clips}, leaving clips ${plan.cursor + 1}-${plan.startIndex} unmeasured;` +
+      ` cursor ends at ${plan.cursorAfter})`;
+  } else {
+    line =
+      `${plan.dataset}: cursor ${plan.cursor} -> ${plan.endIndex}` +
+      ` (${clips}, ${remaining} remaining after)`;
+  }
   if (!plan.truncated) return line;
   const short = plan.requestedEndIndex - plan.consumableCount;
   return `${line} [EXHAUSTED: depth ${plan.requestedEndIndex} requested, ${short} beyond the corpus; running the ${plan.clips.length} that remain]`;

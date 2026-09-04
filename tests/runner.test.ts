@@ -86,6 +86,118 @@ describe("benchmark CLI defaults", () => {
     }
   });
 
+  test("--from rewinds past the cursor and the preview says so, per dataset", async () => {
+    const { exitCode, stdout, stderr } = await dryRun(
+      "--name",
+      "from-rewind",
+      "--from",
+      "0",
+      "--samples",
+      "400",
+    );
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain(
+      "From:      --from 0 (explicit start into the consumable range; the cursor is ignored for this run only)",
+    );
+    expect(stdout).toContain(
+      "REWIND: 5 datasets will re-measure clips already measured.",
+    );
+    for (const dataset of DATASET_IDS) {
+      // The committed 400-clip run left every dataset at 397, so --from 0 rewinds all
+      // five. Nothing may read as the ordinary forward `cursor A -> B` line.
+      expect(stdout).toContain(
+        `${dataset}: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of`,
+      );
+      expect(stdout).toContain("397 of them already measured; cursor ends at 400, never lower than 397)");
+      expect(stdout).not.toContain(`${dataset}: cursor 397 -> 400`);
+    }
+  });
+
+  test("--from 0 --samples 400 and --from 0 --to 400 name the same clips", async () => {
+    const delta = await dryRun("--name", "from-delta", "--from", "0", "--samples", "400");
+    const target = await dryRun("--name", "from-target", "--from", "0", "--to", "400");
+
+    expect(delta.exitCode).toBe(0);
+    expect(target.exitCode).toBe(0);
+    for (const dataset of DATASET_IDS) {
+      const line = (out: string) =>
+        out.match(new RegExp(`^  ${dataset}: .*$`, "m"))?.[0].replace(/^ +/, "");
+      expect(line(target.stdout), dataset).toBe(line(delta.stdout));
+    }
+    // Two full manifest builds in one test; the default 5s deadline is not enough.
+  }, 30_000);
+
+  test("rejects --from without a depth flag", async () => {
+    const { exitCode, stderr } = await dryRun("--name", "from-alone", "--from", "0");
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--from needs a depth flag");
+  });
+
+  test("rejects --from together with --resume", async () => {
+    const { exitCode, stderr } = await dryRun(
+      "--from",
+      "0",
+      "--samples",
+      "4",
+      "--resume",
+      "results/does-not-matter",
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Use --from or --resume, not both");
+  });
+
+  test("rejects a --from past a dataset's consumable count, naming the count", async () => {
+    const { exitCode, stderr } = await dryRun(
+      "--name",
+      "from-too-deep",
+      "--from",
+      "999999",
+      "--samples",
+      "4",
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toMatch(
+      /--from 999999 is out of range for \S+: it has \d+ consumable clips, so the valid --from indices are 0-\d+\./,
+    );
+  });
+
+  test("rejects a negative --from", async () => {
+    const { exitCode, stderr } = await dryRun(
+      "--name",
+      "from-negative",
+      "--from",
+      "-1",
+      "--samples",
+      "4",
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--from must be a non-negative integer index");
+  });
+
+  test("--description is accepted as an alias of --configuration-note", async () => {
+    // Codictate's harness spells the free-text note --description, so the same command
+    // shape has to work here. Both spellings write config.configurationNote.
+    const note = await dryRun("--name", "note-alias", "--samples", "4", "--description", "verify timing fix");
+    const legacy = await dryRun(
+      "--name",
+      "note-alias",
+      "--samples",
+      "4",
+      "--configuration-note",
+      "verify timing fix",
+    );
+
+    expect(note.stderr).toBe("");
+    expect(note.exitCode).toBe(0);
+    expect(legacy.exitCode).toBe(0);
+  }, 30_000);
+
   test("plans every dataset even where the requested depth exhausts the corpus", async () => {
     const { exitCode, stdout } = await dryRun("--name", "exhaustion", "--to", "100000");
 

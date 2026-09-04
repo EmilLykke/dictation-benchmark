@@ -8,8 +8,10 @@ import {
 } from "./adapters/wispr-flow";
 import { buildManifest } from "./manifest";
 import {
+  consumableEntries,
   deriveCursors,
   formatPlanLine,
+  fromIndexError,
   ManifestFingerprintMismatch,
   manifestFingerprint,
   planDataset,
@@ -197,6 +199,17 @@ interface CliOptions {
   name?: string;
   resume?: string;
   dryRun: boolean;
+  /**
+   * `--from N`: an explicit start index into the CONSUMABLE range, overriding the
+   * cursor for this run only.
+   *
+   * Deliberately not part of {@link RunConfig} and therefore never serialised: it is
+   * an instruction about where to start, not a property of the run, and the range it
+   * produces is already recorded verbatim in that dataset's `selection`. Keeping it
+   * off the record also means a `--resume` can never pick a rewind back up out of a
+   * file, which matters because `--from` and `--resume` are refused together.
+   */
+  from?: number;
   config: RunConfig;
 }
 
@@ -240,8 +253,8 @@ async function main(): Promise<void> {
     };
   }
 
-  const plans = buildPlan(run, resultsRoot);
-  printPlan(run, runDir, plans);
+  const plans = buildPlan(run, resultsRoot, options.from);
+  printPlan(run, runDir, plans, options.from);
   if (options.dryRun) return;
   if (plans.every((plan) => plan.clips.length === 0)) {
     console.log("\nNothing left to measure at this depth. Flow was not touched.");
@@ -458,8 +471,17 @@ export function depthRequest(config: RunConfig): DepthRequest {
  *
  * It does throw on a fingerprint mismatch, because then every stored offset is
  * meaningless. See `ManifestFingerprintMismatch`.
+ *
+ * `fromIndex` is `--from N`, and it replaces the cursor as the start for every
+ * dataset in this run. Its bound cannot be checked at parse time — it depends on how
+ * many consumable clips the selected datasets actually hold — so it is checked here,
+ * before a clip runs and before Flow is touched.
  */
-function buildPlan(run: BenchmarkRun, resultsRoot: string): DatasetPlan[] {
+function buildPlan(
+  run: BenchmarkRun,
+  resultsRoot: string,
+  fromIndex?: number,
+): DatasetPlan[] {
   const config = run.config;
   const datasetsDir = datasetsRoot(config.codictatePath);
   if (!existsSync(datasetsDir)) throw new Error(`Codictate benchmark data missing: ${datasetsDir}`);
@@ -475,6 +497,14 @@ function buildPlan(run: BenchmarkRun, resultsRoot: string): DatasetPlan[] {
     });
   }
 
+  if (fromIndex !== undefined) {
+    const counts = new Map(
+      [...manifests].map(([dataset, entries]) => [dataset, consumableEntries(entries).length]),
+    );
+    const error = fromIndexError(fromIndex, counts);
+    if (error) throw new Error(error);
+  }
+
   const records = scanRunRecords(resultsRoot, { productId: run.product.id });
   const cursors = deriveCursors(records, fingerprints, datasetsDir);
   const request = depthRequest(config);
@@ -488,7 +518,7 @@ function buildPlan(run: BenchmarkRun, resultsRoot: string): DatasetPlan[] {
     const recorded = run.results[dataset]?.selection;
     const current = fingerprints.get(dataset)!;
     if (!recorded) {
-      plans.push(planDataset(dataset, entries, cursors.get(dataset) ?? 0, request));
+      plans.push(planDataset(dataset, entries, cursors.get(dataset) ?? 0, request, fromIndex));
       continue;
     }
     if (recorded.manifestFingerprint !== current.fingerprint) {
@@ -605,8 +635,16 @@ function sessionEntries(plan: DatasetPlan): ManifestEntry[] {
  * `--samples` is a delta, so the same command run twice measures twice as many
  * clips. An operator has to be able to read off exactly which consumable clips a
  * command is about to spend, per dataset, before it spends them.
+ *
+ * `--from` raises the stakes: it is the only flag that can re-spend clips already
+ * measured, so the header names it and every per-dataset line that rewinds says so.
  */
-function printPlan(run: BenchmarkRun, runDir: string, plans: DatasetPlan[]): void {
+function printPlan(
+  run: BenchmarkRun,
+  runDir: string,
+  plans: DatasetPlan[],
+  fromIndex?: number,
+): void {
   const entries = plans.flatMap(sessionEntries);
   const scored = plans.reduce((total, plan) => total + plan.clips.length, 0);
   const warmupReplays = plans.filter((plan) => plan.clips.length > 0).length * WARMUP_COUNT;
@@ -620,6 +658,17 @@ function printPlan(run: BenchmarkRun, runDir: string, plans: DatasetPlan[]): voi
       ? `Depth:     --samples ${request.samples} (delta: ${request.samples} more per dataset, from the cursor)`
       : `Depth:     --to ${request.to} (target depth: run until ${request.to} per dataset are measured)`,
   );
+  if (fromIndex !== undefined) {
+    console.log(
+      `From:      --from ${fromIndex} (explicit start into the consumable range; the cursor is ignored for this run only)`,
+    );
+    const rewinds = plans.filter((plan) => plan.rewind);
+    if (rewinds.length > 0) {
+      console.log(
+        `           REWIND: ${rewinds.length} dataset${rewinds.length === 1 ? "" : "s"} will re-measure clips already measured. Nothing is deleted and no cursor moves backwards; the same clips are simply run again.`,
+      );
+    }
+  }
   console.log(`Warmups:   ${WARMUP_COUNT} per dataset, replayed unscored, never consumed`);
   console.log(`Clips:     ${entries.length} (${warmupReplays} warmup replays + ${scored} scored)`);
   console.log(`Audio:     ${(audioSeconds / 60).toFixed(1)} minutes at 1.0×`);
@@ -664,10 +713,15 @@ function parseArgs(args: string[]): CliOptions {
       case "--datasets": config.datasets = parseDatasets(value()); break;
       case "--samples": config.samples = positiveInteger(value(), flag); sawSamples = true; break;
       case "--to": config.to = positiveInteger(value(), flag); sawTo = true; break;
+      case "--from": options.from = nonNegativeInteger(value(), flag); break;
       case "--timeout-ms": config.timeoutMs = positiveInteger(value(), flag); break;
       case "--poll-interval-ms": config.pollIntervalMs = positiveInteger(value(), flag); break;
       case "--device": config.deviceName = value(); break;
-      case "--configuration-note": config.configurationNote = value(); break;
+      // Two spellings of one field, so the same command shape works in this harness and
+      // in Codictate's `bench:stt`, which calls the free-text note `--description`. Both
+      // write `config.configurationNote`; the recorded field name is unchanged.
+      case "--configuration-note":
+      case "--description": config.configurationNote = value(); break;
       default: throw new Error(`Unknown flag: ${flag}`);
     }
   }
@@ -679,6 +733,22 @@ function parseArgs(args: string[]): CliOptions {
   // `--to` supersedes the default delta; leaving both set would make the record
   // claim a delta the run never used.
   if (sawTo) delete config.samples;
+  if (options.from !== undefined && !sawSamples && !sawTo) {
+    throw new Error(
+      "--from needs a depth flag. --from N --samples M measures M clips starting at N; " +
+        "--from N --to M measures from N up to depth M. --from on its own names a start and " +
+        `no end, and falling back to the default --samples ${DEFAULT_SAMPLES} would pick a ` +
+        "depth nobody asked for on the one path that re-spends clips already measured.",
+    );
+  }
+  if (options.from !== undefined && options.resume) {
+    throw new Error(
+      "Use --from or --resume, not both. A resumed run already recorded the range it was " +
+        "measuring and carries the clips it finished from that range; rewinding it to a " +
+        "different start would file those clips against a range they do not belong to. " +
+        "Finish or abandon that run, then start a new one with --from.",
+    );
+  }
   if (options.resume && options.name) throw new Error("Use --resume or --name, not both");
   return options;
 }
@@ -697,6 +767,22 @@ function parseDatasets(value: string): DatasetId[] {
 function positiveInteger(value: string, flag: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${flag} must be a positive integer`);
+  return parsed;
+}
+
+/**
+ * An index rather than a count, so zero is legal and negative is not.
+ *
+ * `--from 0` is the whole point of the flag — re-measure from the first consumable
+ * clip — so it cannot share `positiveInteger` with the depth flags.
+ */
+function nonNegativeInteger(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(
+      `${flag} must be a non-negative integer index into the consumable range (0 is the first clip after the ${WARMUP_COUNT} reserved warmups)`,
+    );
+  }
   return parsed;
 }
 

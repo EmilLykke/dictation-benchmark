@@ -110,9 +110,10 @@ runs out of `results/` to start a fresh accumulation, or exclude those datasets 
 | --- | --- |
 | `--samples N` | **Delta.** Run N consumable clips this repository has not measured before for this product, from wherever each dataset's cursor sits. Defaults to 20. |
 | `--to N` | **Target depth.** Run whatever is needed for N consumable clips to have been measured in total, and do nothing where that is already true. |
+| `--from N` | **Explicit start index** into the consumable range, overriding each dataset's cursor for this run only. Index 0 is the first clip after the three reserved warmups. Needs `--samples` or `--to`. See [Re-measuring clips already measured](#re-measuring-clips-already-measured---from). |
 
-They are mutually exclusive. Warmups are outside both counts: `--samples 4` plays
-seven clips per dataset and scores four.
+`--samples` and `--to` are mutually exclusive. Warmups are outside both counts:
+`--samples 4` plays seven clips per dataset and scores four.
 
 `--samples` is destructive by default — running the same command twice consumes
 twice — so a **plan preview is always printed before any clip runs**, one line per
@@ -143,6 +144,160 @@ re-uses a clip.
 ```
   es_419: cursor 397 -> 905 (clips 398-905 of 905 consumable, 0 remaining after) [EXHAUSTED: depth 1000 requested, 95 beyond the corpus; running the 508 that remain]
 ```
+
+## The same command in both harnesses
+
+Two repositories measure the same clips against the same ordered manifests: this one, and `codictate` next door. The flags line up on purpose, so one command shape works in both.
+
+| | `dictation-product-benchmark` (one external product) | `codictate` (its own Speech Models) |
+| --- | --- | --- |
+| entry point | `bun run benchmark -- ...` | `bun run benchmark -- ...`, or the original `bun run bench:stt -- ...` |
+| preview, run nothing | `--dry-run` | `--plan-only` |
+| depth as a delta | `--samples N` | `--samples N` |
+| depth as a target | `--to N` | `--to N` |
+| explicit start index | `--from N` | `--from N` |
+| dataset choice | `--datasets test-clean,hu_hu` | `--splits test-clean` and `--languages hu_hu` |
+| run name | `--name <slug>`, required for a new run | `--name <slug>`, required unless `--plan-only` |
+| free-text note | `--configuration-note` or `--description` | `--description` or `--configuration-note` |
+| model choice | none: the product is the subject | `--models <ids>`; omitting it opens the interactive picker |
+
+Both spellings of the note flag are accepted in both repositories, so neither has to be retyped. Two differences are real and stay:
+
+- **`codictate` requires the note, this repository does not.** `codictate` writes it to `description` in `stt.json`, and the website renders that string as the run page's `<title>`, its meta and OpenGraph description, and the page lede. A blank one would publish a page titled ` - Codictate benchmarks`, so it stays required rather than defaulted. `--plan-only` needs neither `--name` nor `--description`.
+- **`codictate` has an interactive picker, this repository has nothing to pick.** A multi-model harness offers a model list when `--models` is absent; a single-product harness has one subject. `--from` is refused on the picker path in `codictate`, because the picker only offers a delta from each cursor and would overwrite a typed depth.
+
+### Re-measure the same 400 clips I already measured
+
+```bash
+# dictation-product-benchmark
+bun run benchmark -- --name verify-timing-fix \
+  --description "Re-measure clips 1-400 to isolate the timing fix" \
+  --datasets hu_hu --from 0 --samples 400
+
+# codictate
+bun run benchmark -- --name verify-timing-fix \
+  --description "Re-measure clips 1-400 to isolate the timing fix" \
+  --models large-v3-q5_0 --splits none --languages hu_hu --from 0 --samples 400
+```
+
+Both print the same rewind line, differing only in the model prefix `codictate` needs:
+
+```
+  hu_hu: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of 902 consumable, 397 of them already measured; cursor ends at 400, never lower than 397)
+  [large-v3-q5_0] hu_hu: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of 902 consumable, 397 of them already measured; cursor ends at 400, never lower than 397)
+```
+
+Add `--dry-run` (here) or `--plan-only` (`codictate`) to see that line and spend nothing.
+
+## Re-measuring clips already measured: `--from`
+
+`--samples` and `--to` can only push a cursor forward, which is what makes them safe
+and what makes them useless for one job: **verifying a fix in isolation**. If a change
+moves Hungarian WER from 22.9% to 21.4%, the cursor guarantees the second measurement
+used *different clips*, so the difference could be the fix or could be the sample.
+
+`--from N` is the answer. It is an **explicit start index into the consumable range**,
+overriding every cursor for that run only. Index 0 is the first clip after the three
+reserved warmups, so `--from 0` starts at manifest entry 3. Nothing is written back,
+no cursor is edited, and the run records the range it measured exactly like any other
+run.
+
+```bash
+# Re-measure the same 400 clips this repository already measured
+bun run benchmark -- \
+  --name verify-timing-fix \
+  --description "Re-measure clips 1-400 to isolate the timing fix" \
+  --datasets hu_hu \
+  --from 0 --samples 400
+```
+
+**`--from` needs a depth flag.** `--from N --samples M` measures M clips starting at N;
+`--from N --to M` measures from N up to depth M. `--from 0 --samples 400` and
+`--from 0 --to 400` name the identical 400 clips. `--from` on its own is rejected
+rather than defaulting: it names a start and no end, and falling back to the default
+`--samples 20` would pick a depth nobody asked for on the one path that re-spends clips
+already paid for.
+
+It is refused in three cases, each with its own message:
+
+| Refused | Why |
+| --- | --- |
+| a negative index | `--from` is an index, not a count. `0` is legal; `-1` is not. |
+| an index at or past a dataset's consumable count | Clamping is what would make this dangerous: `--from 5000` on the 902-clip `hu_hu` pool would measure nothing and record depth 902. The message names the dataset and its count: `--from 5000 is out of range for test-clean: it has 2617 consumable clips, so the valid --from indices are 0-2616.` |
+| combined with `--resume` | A resumed run already recorded the range it was measuring and carries the clips it finished from that range. Rewinding it to a different start would file those clips against a range they do not belong to. |
+
+### The plan preview names a rewind
+
+A rewind is the one genuinely destructive path here, so its preview line is not the
+ordinary line with different numbers. The arrow runs backwards, the flag is named
+beside the cursor it overrode, and the clips about to be spent a second time are
+counted out.
+
+```
+From:      --from 0 (explicit start into the consumable range; the cursor is ignored for this run only)
+           REWIND: 5 datasets will re-measure clips already measured. Nothing is deleted and no cursor moves backwards; the same clips are simply run again.
+...
+Plan:
+  test-clean: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of 2617 consumable, 397 of them already measured; cursor ends at 400, never lower than 397)
+  hu_hu: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of 902 consumable, 397 of them already measured; cursor ends at 400, never lower than 397)
+```
+
+Compare the same depth without `--from`, which is the shape every other run prints:
+
+```
+Plan:
+  test-clean: cursor 397 -> 797 (clips 398-797 of 2617 consumable, 1820 remaining after)
+  hu_hu: cursor 397 -> 797 (clips 398-797 of 902 consumable, 105 remaining after)
+```
+
+A `--from` that starts *past* a cursor is not a rewind, but it is flagged too, because
+it would record a depth over clips nobody measured:
+
+```
+  hu_hu: GAP --from 500 starts past cursor 397 (clips 501-600 of 902 consumable, leaving clips 398-500 unmeasured; cursor ends at 600)
+```
+
+### A rewind never lowers a cursor
+
+The cursor for a dataset is the **maximum `endIndex` over every run in `results/`**
+whose fingerprint matches (`deriveCursors` in `src/selection.ts`), so a rewound run is
+recorded like any other and the maximum does the rest:
+
+- re-measuring `[0, 400)` while the cursor reads 397 leaves the cursor at **400**
+- re-measuring `[0, 200)` while the cursor reads 397 leaves it at **397**, untouched
+
+The earlier run is not rewritten, nothing subtracts, and no clip is lost. `--from` is
+deliberately not serialised into `config`: the instruction is about where to start, and
+the range it produced is already in that dataset's `selection` record.
+
+### Worked example: verifying a fix by re-measuring the same range
+
+The committed run left every dataset at cursor 397, and scored 22.93% WER on `hu_hu`.
+A timing fix lands. To attribute a change to the fix rather than to a different sample:
+
+```bash
+# 1. Read off exactly which clips will be spent, and spend nothing.
+bun run benchmark -- --name verify-timing-fix --datasets hu_hu --from 0 --to 397 --dry-run
+#   hu_hu: REWIND cursor 397 -> --from 0 (re-measuring clips 1-397 of 902 consumable, 397 of them already measured; cursor ends at 397, never lower than 397)
+
+# 2. Re-measure the identical 397 clips. `--to 397` rather than `--samples 397` so the
+#    range matches the recorded one exactly, whatever the cursor happens to be.
+bun run benchmark -- \
+  --name verify-timing-fix \
+  --description "Clips 1-397 again, after the timing fix" \
+  --datasets hu_hu \
+  --from 0 --to 397
+
+# 3. Both runs now record selection {startIndex: 0, endIndex: 397} against the same
+#    fingerprint, so the two WERs are the same 397 clips and the delta is the fix.
+#    The cursor is still 397: nothing was consumed and nothing was lost.
+bun run benchmark -- --name next --datasets hu_hu --samples 400 --dry-run
+#   hu_hu: cursor 397 -> 797 (clips 398-797 of 902 consumable, 105 remaining after)
+```
+
+Two runs at equal depth is a real case downstream, and it is resolved in favour of the
+newer one: the website's benchmark reader gives an **equal-depth tie to the newer
+`runDate`**, so the re-measured run is the one that renders.
 
 ## Validate dataset plan
 
