@@ -231,8 +231,10 @@ export function readRunPlan(path: string, runId?: string): RunPlan | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(
+      `Run Plan ${path} contains malformed JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   assertRunPlanOnDisk(parsed, runId);
   if (!fingerprintV2Matches(parsed.fingerprintV2, parsed.orderedClipIds)) {
@@ -273,7 +275,9 @@ export function readRunRecordV2(path: string): RunRecordV2 | null {
   } catch {
     return null;
   }
-  return isRunRecordV2(parsed) ? parsed : null;
+  if (!isRunRecordV2(parsed)) return null;
+  assertRunRecordAgreesWithPlan(parsed);
+  return parsed;
 }
 
 export interface ScannedV2Record {

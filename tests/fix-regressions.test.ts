@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   measuredPrefix,
+  finalizeRunArtifacts,
   sampleClipId,
   sampleMeasurementFor,
   sessionPlaylist,
@@ -300,7 +301,10 @@ describe("5. normalizeRunRecordV2 sits in front of every v2 read", () => {
       status: "completed",
       startedAt: "2026-09-04T00:00:00.000Z",
       completedAt: "2026-09-04T01:00:00.000Z",
-      samples: [],
+      samples: plan.orderedClipIds.map((clipId) => ({
+        clipId, audioDurationSec: 2, responseMs: 400, status: "ok" as const,
+        wordErrors: 0, referenceWords: 1, charErrors: 0, referenceChars: 1, isWarmup: false,
+      })),
     });
 
     const { schemaVersion, ...rest } = record as unknown as Record<string, unknown>;
@@ -311,6 +315,28 @@ describe("5. normalizeRunRecordV2 sits in front of every v2 read", () => {
     expect(read).not.toBeNull();
     expect(read!.schemaVersion).toBe(SCHEMA_VERSION);
     expect("SCHEMA_VERSION" in (read as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  test("a structurally-v2 semantic contradiction throws instead of disappearing", () => {
+    const root = temporaryRoot();
+    const entries: ManifestEntry[] = Array.from({ length: 4 }, (_unused, index) => ({
+      id: `c${index}`, clipId: `fleurs/da_dk/audio/test/${index}.wav`,
+      audioPath: `/tmp/${index}.wav`, transcript: "r", language: "da", audioDurationSec: 2,
+    }));
+    const plan = runPlanFor({ runId: "contradiction", harness: "wispr-flow", model: "wispr-flow",
+      dataset: "da_dk", entries, fromIndex: 0, toIndex: 1, createdAt: "2026-09-04T00:00:00Z" });
+    const record = buildRunRecordV2({
+      plan, status: "completed", startedAt: "2026-09-04T00:00:00Z",
+      completedAt: "2026-09-04T00:01:00Z",
+      samples: plan.orderedClipIds.map((clipId) => ({
+        clipId, audioDurationSec: 2, responseMs: 400, status: "ok" as const,
+        wordErrors: 0, referenceWords: 1, charErrors: 0, referenceChars: 1, isWarmup: false,
+      })),
+    });
+    const path = join(root, "record.json");
+    writeJsonAtomic(path, { ...record, datasetId: "fleurs/hu_hu" });
+
+    expect(() => readRunRecordV2(path)).toThrow(/says dataset fleurs\/hu_hu/);
   });
 });
 
@@ -430,5 +456,67 @@ describe("7. collectRecords excludes smoke output from a production batch", () =
     expect(collectRecords(production)).toEqual([]);
     // The smoke chain reads its own tree, which is why the opt-in exists at all.
     expect(collectRecords(smoke).length).toBeGreaterThan(0);
+  });
+});
+
+describe("8. v1-completed/v2-incomplete finalization crash is recoverable", () => {
+  test("resume finalization promotes v2 before rewriting the completed v1 marker", () => {
+    const runDir = temporaryRoot("finalize-repair-");
+    const entries: ManifestEntry[] = Array.from({ length: 5 }, (_unused, index) => ({
+      id: `c${index}`,
+      clipId: `fleurs/da_dk/audio/test/${index}.wav`,
+      audioPath: `/datasets/fleurs/da_dk/audio/test/${index}.wav`,
+      transcript: "reference",
+      language: "da",
+      audioDurationSec: 2,
+    }));
+    const datasetPlan = planDataset("da_dk", entries, 0, { kind: "target", to: 1 });
+    const plan = runPlanFor({
+      runId: "flow-crashed-finalizing", batchId: "batch-1", harness: "wispr-flow",
+      model: "wispr-flow", dataset: "da_dk", entries, fromIndex: 0, toIndex: 1,
+      createdAt: "2026-09-04T00:00:00.000Z",
+    });
+    saveRunPlanOnce(runDir, "da_dk", plan);
+    const sample = scored({
+      id: entries[WARMUP_COUNT].id,
+      clipId: entries[WARMUP_COUNT].clipId,
+      audioPath: entries[WARMUP_COUNT].audioPath,
+      audioDurationSec: entries[WARMUP_COUNT].audioDurationSec,
+      language: "da",
+      reference: "reference",
+    });
+    const run = {
+      schemaVersion: 1 as const,
+      status: "completed" as const,
+      runId: plan.runId,
+      createdAt: plan.createdAt,
+      completedAt: "2026-09-04T01:00:00.000Z",
+      updatedAt: "2026-09-04T01:00:00.000Z",
+      product: { id: "wispr-flow", label: "Wispr Flow", version: "1" },
+      hardware: { platform: "darwin", release: "1", arch: "arm64", cpu: "test" },
+      config: {
+        codictatePath: "/codictate", datasets: ["da_dk" as DatasetId], to: 1,
+        deviceName: "BlackHole 2ch", hotkey: { keyCode: 6, modifiers: ["option" as const] },
+        leadMs: 100, tailMs: 100, timeoutMs: 1_000, batchId: "batch-1", stableMs: 750,
+        pollIntervalMs: 10, configurationNote: "test",
+      },
+      results: { da_dk: { samples: [sample], selection: selectionFor(datasetPlan, 1) } },
+    };
+    saveRunRecordV2(runDir, "da_dk", buildRunRecordV2({
+      plan, status: "incomplete", startedAt: plan.createdAt, completedAt: null,
+      samples: [sampleMeasurementFor(sample, "/datasets")],
+    }));
+
+    finalizeRunArtifacts(
+      runDir,
+      run,
+      [datasetPlan],
+      new Map([["da_dk" as DatasetId, entries]]),
+      "/datasets",
+    );
+
+    expect(readRunRecordV2(join(runDir, "v2", "da_dk.json"))!.status).toBe("completed");
+    expect(JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")).status).toBe("completed");
+    expect(Bun.file(join(runDir, "stt.json")).size).toBeGreaterThan(0);
   });
 });

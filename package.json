@@ -8,7 +8,7 @@
     "preflight": "bun run src/preflight.ts",
     "benchmark": "bun run src/runner.ts",
     "backfill:selection": "bun run scripts/backfill-selection.ts",
-    "check": "tsc --noEmit && bun test && swift build -c debug --package-path native",
+    "check": "tsc --noEmit && bun test && swift test --package-path native",
     "test": "bun test",
     "benchmark:publication": "bun run src/publication.ts"
   },

@@ -520,12 +520,26 @@ export function loadOrCreateBatchManifest(
   createdAt: string,
 ): { manifest: BatchManifest; created: boolean } {
   const path = manifestPath(options);
-  const stages = stageMatrix(options, manifests, createdAt);
+  const provisionalStages = stageMatrix(options, manifests, createdAt);
+  let effectiveCreatedAt = createdAt;
+  if (!existsSync(path)) {
+    for (const stage of provisionalStages) {
+      for (const record of stage.plans) {
+        const existing = readRunPlan(stagePlanPath(options, stage.stageId, record.dataset));
+        if (existing) {
+          effectiveCreatedAt = existing.createdAt;
+          break;
+        }
+      }
+      if (effectiveCreatedAt !== createdAt) break;
+    }
+  }
+  const stages = stageMatrix(options, manifests, effectiveCreatedAt);
   const fresh: BatchManifest = {
     manifestVersion: 1,
     batchId: options.batchId,
     mode: options.smoke ? "smoke" : "production",
-    createdAt,
+    createdAt: effectiveCreatedAt,
     fromIndex: options.fromIndex,
     toIndex: options.toIndex,
     flowHotkey: options.flowHotkey.spec,
@@ -537,15 +551,24 @@ export function loadOrCreateBatchManifest(
   if (existsSync(path)) {
     const existing = JSON.parse(readFileSync(path, "utf8")) as BatchManifest;
     assertManifestsAgree(existing, fresh, path);
+    ensureBatchPlans(options, manifests, existing);
     return { manifest: existing, created: false };
   }
 
   mkdirSync(batchDir(options), { recursive: true });
+  // Plans commit before the manifest. A manifest therefore never advertises files
+  // that were not durably written; an interrupted first write is recovered on retry.
+  ensureBatchPlans(options, manifests, fresh);
   writeJsonAtomic(path, fresh);
-  // The full clip lists go beside the manifest, one immutable file per stage per
-  // dataset, because the manifest carries only fingerprints and a resume needs the
-  // order.
-  for (const stage of stages) {
+  return { manifest: fresh, created: true };
+}
+
+function ensureBatchPlans(
+  options: PublicationOptions,
+  manifests: ReadonlyMap<DatasetId, ManifestEntry[]>,
+  manifest: BatchManifest,
+): void {
+  for (const stage of manifest.stages) {
     mkdirSync(join(batchDir(options), "plans", stage.stageId), { recursive: true });
     for (const record of stage.plans) {
       const entries = manifests.get(record.dataset)!;
@@ -555,13 +578,33 @@ export function loadOrCreateBatchManifest(
         stage.harness,
         stage.model,
         record.dataset,
-        createdAt,
+        manifest.createdAt,
         record.toIndex,
       );
-      writeJsonAtomic(stagePlanPath(options, stage.stageId, record.dataset), plan);
+      const path = stagePlanPath(options, stage.stageId, record.dataset);
+      const existing = readRunPlan(path);
+      if (existing) {
+        const expectedRunId = `${options.batchId}_${stage.stageId}_${record.dataset}`;
+        if (
+          existing.fingerprintV2.value !== record.fingerprintV2.value ||
+          existing.runId !== expectedRunId ||
+          existing.batchId !== options.batchId ||
+          existing.harness !== stage.harness ||
+          existing.model !== stage.model ||
+          existing.datasetId !== record.datasetId ||
+          existing.fromIndex !== record.fromIndex ||
+          existing.toIndex !== record.toIndex ||
+          existing.createdAt !== manifest.createdAt
+        ) {
+          throw new Error(
+            `Run Plan ${path} disagrees with batch manifest identity or selection.`,
+          );
+        }
+        continue;
+      }
+      writeJsonAtomic(path, plan);
     }
   }
-  return { manifest: fresh, created: true };
 }
 
 function assertManifestsAgree(existing: BatchManifest, fresh: BatchManifest, path: string): void {
@@ -687,8 +730,13 @@ export function stageDecision(
   if (complete) {
     return { stage, decision: "skip-completed", state: { ...next, status: "completed" } };
   }
-  const started = Object.values(progress).some((entry) => entry.cursor > 0) || state.runId;
-  return { stage, decision: started ? "resume" : "run", state: next };
+  const discoveredRunId = state.runId ?? runIdForStage(stage, records, options.batchId);
+  const started = Object.values(progress).some((entry) => entry.cursor > 0) || discoveredRunId;
+  return {
+    stage,
+    decision: started ? "resume" : "run",
+    state: discoveredRunId ? { ...next, runId: discoveredRunId } : next,
+  };
 }
 
 function readStageState(options: PublicationOptions, stageId: string): StageState {
@@ -814,7 +862,7 @@ export function stageCommand(
     "bench:stt",
     "--",
     "--name",
-    `${options.batchId}-${stage.model}`,
+    codictateRunName(options.batchId, stage.model),
     "--description",
     description,
     // Always. It is what puts `batchId` on the v2 record, which is the only way a later
@@ -845,6 +893,16 @@ export function stageCommand(
     // first clip's wall time.
     "--skip-download",
   ];
+}
+
+/** Codictate accepts lowercase alphanumerics separated by single hyphens. */
+export function codictateRunName(batchId: string, model: string): string {
+  const value = `${batchId}-${model}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!value) throw new Error(`Cannot derive a Codictate run name from ${batchId}/${model}`);
+  return value;
 }
 
 /**
@@ -1003,7 +1061,6 @@ export function manualResumeCommand(
         options.batchId,
         "--out",
         codictateResultsRoot(options),
-        `# in ${options.codictatePath}`,
       ]
     : [
         "bun",
@@ -1019,6 +1076,22 @@ export function manualResumeCommand(
         "--codictate",
         options.codictatePath,
       ];
+}
+
+function manualResumeLine(options: PublicationOptions, stage: StageRecord, runId: string): string {
+  const command = shellQuote(manualResumeCommand(options, stage, runId));
+  return stage.harness === "codictate"
+    ? `${command}\n    # run from ${options.codictatePath}`
+    : command;
+}
+
+export function assertStageCompletedAfterExit(stageId: string, decision: StageOutcome["decision"]): void {
+  if (decision !== "skip-completed") {
+    throw new Error(
+      `[${stageId}] exited 0 but did not complete every planned record. ` +
+        `Stopping rather than continuing with a comparison hole.`,
+    );
+  }
 }
 
 /** Where a stage's command runs. Codictate stages run in the Codictate checkout. */
@@ -1207,6 +1280,7 @@ async function main(): Promise<void> {
     codictatePath: options.codictatePath,
     deviceName: options.deviceName,
     datasets: options.datasets,
+    batchId: options.batchId,
     // The models are checked by `modelInventoryChecks` below, against the Codictate
     // catalogue, so `repositoryChecks` is not asked to guess at artifact names.
     resultsRoot: options.resultsRoot,
@@ -1377,8 +1451,8 @@ async function main(): Promise<void> {
         `[${stage.stageId}] has measurements on disk but no run id recorded for it, so it ` +
           `cannot be resumed by name - and this orchestrator never searches for the latest ` +
           `unfinished run, because that search resumes the wrong one silently.\n\n` +
-          `Resume it by hand, then re-run this batch:\n  $ ${shellQuote(
-            manualResumeCommand(options, stage, "<runId>"),
+          `Resume it by hand, then re-run this batch:\n  $ ${manualResumeLine(
+            options, stage, "<runId>",
           )}\n\nThe run id is the run directory's name under ${stageResultsRoot(options, stage)}.`,
       );
     }
@@ -1400,15 +1474,17 @@ async function main(): Promise<void> {
     });
     const exitCode = await child.exited;
     if (exitCode !== 0) {
+      const failedRecords = collectRecords(options);
+      const failedRunId =
+        runIdForStage(stage, failedRecords, options.batchId) ?? recordedRunId;
       saveStageState(options, {
         ...outcome.state,
+        ...(failedRunId ? { runId: failedRunId } : {}),
         status: "failed",
         attempts: outcome.state.attempts + 1,
         lastError: `exit code ${exitCode}`,
       });
       writeStaging(options, manifest, outcomes, checks, stagingDir);
-      const failedRunId =
-        runIdForStage(stage, collectRecords(options), options.batchId) ?? recordedRunId;
       // Stop on the first failure. The stages share a clip set on purpose, so a partial
       // matrix is a comparison with a hole in it.
       //
@@ -1420,9 +1496,7 @@ async function main(): Promise<void> {
           `clips as this one, so continuing would build a comparison with a hole in it.\n\n` +
           `Fix the cause and re-run the identical batch command - completed stages are skipped ` +
           `and nothing is re-transcribed. If this stage needs resuming by hand first:\n` +
-          `  $ ${shellQuote(
-            manualResumeCommand(options, stage, failedRunId ?? "<runId>"),
-          )}\n` +
+          `  $ ${manualResumeLine(options, stage, failedRunId ?? "<runId>")}\n` +
           (failedRunId
             ? ""
             : `\nThe run id is the run directory's name under ${stageResultsRoot(options, stage)}.\n`),
@@ -1431,6 +1505,7 @@ async function main(): Promise<void> {
 
     const after = collectRecords(options);
     const refreshed = stageDecision(options, stage, after);
+    assertStageCompletedAfterExit(stage.stageId, refreshed.decision);
     saveStageState(options, {
       ...refreshed.state,
       // Recorded from the records the stage just wrote rather than parsed out of its

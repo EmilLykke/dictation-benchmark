@@ -128,10 +128,41 @@ final class ResponseWindowTests: XCTestCase {
 
         XCTAssertEqual(observation.outcome, .timedOut)
         XCTAssertNil(observation.stabilityConfirmedAt, "There is no stable stamp on a timeout")
-        XCTAssertEqual(
+        XCTAssertEqual(observation.source, .poll)
+        XCTAssertGreaterThan(
             observation.lastTextChangeAt!.milliseconds(since: stoppedAt),
             400,
-            accuracy: 0.001
+            "Live text kept changing after the event stream stalled"
+        )
+    }
+
+    func testNewerPolledChangeWinsAfterEventNotificationsStop() {
+        let clock = VirtualClock()
+        let stoppedAt = clock.now()
+        let eventAt = stoppedAt.advanced(byMilliseconds: 300)
+
+        let observation = observeResponseWindow(
+            openedAt: stoppedAt,
+            settings: settings,
+            clock: clock,
+            sleep: { clock.advance(milliseconds: $0 * 1_000) },
+            readSnapshot: { _ in
+                let elapsed = clock.now().milliseconds(since: stoppedAt)
+                return TextChangeSnapshot(
+                    text: elapsed >= 500 ? "hello there world" : (elapsed >= 300 ? "hello there" : ""),
+                    changeCount: elapsed >= 300 ? 1 : 0,
+                    firstMeaningfulChangeAt: elapsed >= 300 ? eventAt : nil,
+                    // Notification path stalls after first paste. Poll still sees correction.
+                    lastChangeAt: elapsed >= 300 ? eventAt : nil
+                )
+            }
+        )
+
+        XCTAssertEqual(observation.outcome, .stable)
+        XCTAssertEqual(observation.source, .poll)
+        XCTAssertGreaterThanOrEqual(
+            observation.lastTextChangeAt!.milliseconds(since: stoppedAt),
+            500
         )
     }
 }

@@ -667,7 +667,7 @@ another.
 
 ### Speed is published again, with a stated exclusion
 
-`stt.json` leaves now carry a nested `speed` block: pooled
+`stt.json` leaves now carry a nested `speedV2` block: pooled
 `responseMsPerAudioSec = sum(successful responseMs) / sum(successful audioDurationSec)`,
 plus `wallRtf`, `medianResponseMs`, `p90ResponseMs`, `attemptedCount`,
 `respondedCount`, `speedExcludedCount`, `failureCount` and `timeoutCount`.

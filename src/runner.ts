@@ -353,7 +353,6 @@ async function main(): Promise<void> {
   if (options.resume) {
     runDir = resolveRunDir(resultsRoot, options.resume);
     run = JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")) as BenchmarkRun;
-    if (run.status === "completed") throw new Error(`Run already completed: ${runDir}`);
     run.config = withCodictatePath(
       withPollIntervalMs(withTimeoutMs(run.config)),
       options.config.codictatePath,
@@ -389,7 +388,14 @@ async function main(): Promise<void> {
   const plans = buildPlan(run, resultsRoot, options.from, manifests);
   printPlan(run, runDir, plans, options.from);
   if (options.dryRun) return;
-  if (plans.every((plan) => plan.clips.length === 0)) {
+  if (plans.every((plan) => plan.clips.length === 0) ||
+      (options.resume && plansHaveNoRemaining(runDir, run, plans, datasetsDirectory))) {
+    if (options.resume) {
+      finalizeRunArtifacts(runDir, run, plans, manifests, datasetsDirectory);
+      console.log(`\nCompleted: ${join(runDir, "results.json")}`);
+      console.log(`Comparable: ${join(runDir, "stt.json")}`);
+      return;
+    }
     console.log("\nNothing left to measure at this depth. Flow was not touched.");
     return;
   }
@@ -566,33 +572,61 @@ async function main(): Promise<void> {
       }
     }
 
-    run.status = "completed";
-    run.completedAt = new Date().toISOString();
-    saveCodictateResults(runDir, run);
-    saveRun(runDir, run);
-    // The v2 records are promoted to `completed` only here, after every planned clip of
-    // every dataset. `status` is explicit on the record and never inferred from "does
-    // it have as many samples as the plan asked for", because the two answers differ in
-    // the case that matters: a run killed after its last clip but before this line has
-    // every sample and is still not a completed run. Only `completed` records feed the
-    // production cursor, aggregation, coverage, staging or publication.
-    for (const plan of plans) {
-      const dataset = plan.dataset as DatasetId;
-      const result = run.results[dataset];
-      const entries = manifests.get(dataset);
-      if (!result || !entries) continue;
-      // Named, so a plan belonging to a different run is refused rather than read: a
-      // resume names its run id and never searches for a plan that looks close enough.
-      const runPlan = readRunPlan(planPath(runDir, dataset), run.runId);
-      if (!runPlan) continue;
-      saveV2(runDir, dataset, runPlan, run, result.samples, "completed", datasetsDirectory);
-    }
-    deleteCheckpoint(runDir);
+    finalizeRunArtifacts(runDir, run, plans, manifests, datasetsDirectory);
     console.log(`\nCompleted: ${join(runDir, "results.json")}`);
     console.log(`Comparable: ${join(runDir, "stt.json")}`);
   } finally {
     await adapter.close();
   }
+}
+
+function plansHaveNoRemaining(
+  runDir: string,
+  run: BenchmarkRun,
+  plans: readonly DatasetPlan[],
+  datasetsDirectory: string,
+): boolean {
+  return plans.every((plan) => {
+    if (plan.clips.length === 0) return true;
+    const dataset = plan.dataset as DatasetId;
+    const result = run.results[dataset];
+    if (!result) return false;
+    const storedPlan = readRunPlan(planPath(runDir, dataset), run.runId);
+    if (!storedPlan) return false;
+    const completed = new Set(
+      result.samples.map((sample) => sampleClipId(sample, datasetsDirectory)),
+    );
+    return sessionSelection(storedPlan, completed).remaining.length === 0;
+  });
+}
+
+/**
+ * Finish run artifacts in recoverable order: v2 records first, v1 completion marker last.
+ * Re-running `--resume` repeats these atomic writes, repairing any crash between them.
+ */
+export function finalizeRunArtifacts(
+  runDir: string,
+  run: BenchmarkRun,
+  plans: readonly DatasetPlan[],
+  manifests: ReadonlyMap<DatasetId, ManifestEntry[]>,
+  datasetsDirectory: string,
+): void {
+  run.completedAt ??= new Date().toISOString();
+  for (const plan of plans) {
+    const dataset = plan.dataset as DatasetId;
+    const result = run.results[dataset];
+    const entries = manifests.get(dataset);
+    if (!result || !entries) continue;
+    const runPlan = readRunPlan(planPath(runDir, dataset), run.runId);
+    if (!runPlan) {
+      throw new Error(`Cannot complete ${run.runId}/${dataset}: immutable Run Plan is missing.`);
+    }
+    saveV2(runDir, dataset, runPlan, run, result.samples, "completed", datasetsDirectory);
+  }
+  saveCodictateResults(runDir, run);
+  run.status = "completed";
+  saveRun(runDir, run);
+  deleteCheckpoint(runDir);
 }
 
 /**

@@ -31,6 +31,7 @@ import { datasetsRoot } from "./portable-paths";
 import { incompleteRunsFor, scanRunRecords } from "./selection";
 import { buildManifest } from "./manifest";
 import { DATASET_IDS, type DatasetId } from "./types";
+import { scanRunRecordsV2 } from "./v2-record";
 
 export type CheckStatus = "ok" | "failed" | "skipped";
 
@@ -68,6 +69,8 @@ export interface PreflightOptions {
   alsoCheckResultsRoots?: readonly string[];
   /** Free bytes the batch needs. Defaults to 5 GB. */
   minimumFreeBytes?: number;
+  /** Current publication batch. Its own unfinished run is resumed, not a conflict. */
+  batchId?: string;
 }
 
 /** 5 GB: a 400-clip five-dataset batch writes tens of MB, and models are ~1 GB each. */
@@ -226,6 +229,19 @@ function compatibilityStateCheck(options: PreflightOptions): Check {
   let recordCount = 0;
   for (const root of roots) {
     const records = scanRunRecords(root, { productId: "wispr-flow" });
+    const resumableRunIds = new Set(
+      options.batchId === undefined
+        ? []
+        : scanRunRecordsV2(root, { includeSmoke: true })
+            .map(({ record }) => record)
+            .filter(
+              (record) =>
+                record.status === "incomplete" &&
+                record.batchId === options.batchId &&
+                record.harness === "wispr-flow",
+            )
+            .map((record) => record.runId),
+    );
     recordCount += records.length;
     for (const dataset of options.datasets) {
       let entries;
@@ -235,6 +251,7 @@ function compatibilityStateCheck(options: PreflightOptions): Check {
         continue;
       }
       for (const run of incompleteRunsFor(records, dataset, entries)) {
+        if (resumableRunIds.has(run.runId)) continue;
         incomplete.push(`${run.runId} (${dataset}, ${run.orderedClipIds.length} clips)`);
       }
     }

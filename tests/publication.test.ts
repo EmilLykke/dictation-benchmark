@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import {
@@ -20,6 +20,7 @@ import {
   stageDecision,
   stageIdOf,
   stageMatrix,
+  assertStageCompletedAfterExit,
   type PublicationOptions,
 } from "../src/publication";
 import { parseHotkey } from "../src/publication-hotkey";
@@ -30,6 +31,7 @@ import {
   saveRunRecordV2,
   scanRunRecordsV2,
   v2CursorFor,
+  writeJsonAtomic,
 } from "../src/v2-record";
 import { runPlanFor } from "../src/v2-plan";
 import { WARMUP_COUNT } from "../src/selection";
@@ -480,6 +482,48 @@ describe("the immutable shared batch manifest", () => {
     ]);
     expect(readdirSync(join(planDir, "codictate-hviske-v5-tiny-q5_0"))).toEqual(["da_dk.json"]);
   });
+
+  test("recovers an exact missing plan before trusting an existing manifest", () => {
+    const opts = options();
+    const map = manifests();
+    loadOrCreateBatchManifest(opts, map, "2026-09-04T00:00:00.000Z");
+    const missing = join(batchDir(opts), "plans", "wispr-flow", "da_dk.json");
+    const expected = readFileSync(missing, "utf8");
+    unlinkSync(missing);
+
+    loadOrCreateBatchManifest(opts, map, "2026-09-05T00:00:00.000Z");
+    expect(readFileSync(missing, "utf8")).toBe(expected);
+  });
+
+  test("fails closed when an existing plan is malformed", () => {
+    const opts = options();
+    const map = manifests();
+    loadOrCreateBatchManifest(opts, map, "2026-09-04T00:00:00.000Z");
+    const path = join(batchDir(opts), "plans", "wispr-flow", "da_dk.json");
+    writeFileSync(path, "{ truncated");
+
+    expect(() => loadOrCreateBatchManifest(opts, map, "2026-09-05T00:00:00.000Z")).toThrow(
+      /malformed JSON/,
+    );
+  });
+
+  test("recovers a crash after first plan but before manifest with one creation timestamp", () => {
+    const opts = options({ datasets: ["da_dk"], models: ["large-v3-q5_0"] });
+    const map = manifests();
+    const oldCreatedAt = "2026-09-04T00:00:00.000Z";
+    const stage = stageMatrix(opts, map, oldCreatedAt)[0];
+    const path = join(batchDir(opts), "plans", stage.stageId, "da_dk.json");
+    mkdirSync(join(batchDir(opts), "plans", stage.stageId), { recursive: true });
+    writeJsonAtomic(path, runPlanFor({
+      runId: `${opts.batchId}_${stage.stageId}_da_dk`, batchId: opts.batchId,
+      harness: stage.harness, model: stage.model, dataset: "da_dk", entries: map.get("da_dk")!,
+      fromIndex: 0, toIndex: 10, createdAt: oldCreatedAt,
+    }));
+
+    const recovered = loadOrCreateBatchManifest(opts, map, "2026-09-05T00:00:00.000Z");
+    expect(recovered.manifest.createdAt).toBe(oldCreatedAt);
+    expect(readRunPlan(path)!.createdAt).toBe(oldCreatedAt);
+  });
 });
 
 describe("stage decisions", () => {
@@ -509,7 +553,7 @@ describe("stage decisions", () => {
     });
   });
 
-  test("a fully measured stage is SKIPPED, and a partly measured one is RESUMED", () => {
+  test("a fully measured stage is SKIPPED, and an incomplete run is RESUMED", () => {
     const { opts, map } = seeded();
     const stages = stageMatrix(opts, map, "2026-09-04T00:00:00.000Z");
     const plan = runPlanFor({
@@ -524,9 +568,10 @@ describe("stage decisions", () => {
       createdAt: "2026-09-04T00:00:00.000Z",
     });
 
-    const partial = recordFor(plan, "run-1", "completed", plan.orderedClipIds.slice(0, 4));
+    const partial = recordFor(plan, "run-1", "incomplete", plan.orderedClipIds.slice(0, 4));
     expect(stageDecision(opts, stages[0], [partial]).decision).toBe("resume");
-    expect(stageDecision(opts, stages[0], [partial]).state.progress?.da_dk.cursor).toBe(4);
+    // Incomplete records are resume sources only; they never advance published progress.
+    expect(stageDecision(opts, stages[0], [partial]).state.progress?.da_dk.cursor).toBe(0);
 
     const whole = recordFor(plan, "run-1", "completed", plan.orderedClipIds);
     expect(stageDecision(opts, stages[0], [whole]).decision).toBe("skip-completed");
@@ -554,10 +599,8 @@ describe("stage decisions", () => {
     expect(decision.state.progress?.da_dk.cursor).toBe(0);
   });
 
-  test("a gap in the measured clips holds the cursor and reports the gap-inclusive end", () => {
-    // Defect 12, at the batch level.
+  test("a completed record with a gap is rejected before it can affect a stage", () => {
     const { opts, map } = seeded();
-    const stages = stageMatrix(opts, map, "2026-09-04T00:00:00.000Z");
     const plan = runPlanFor({
       runId: "run-1",
       harness: "wispr-flow",
@@ -569,15 +612,9 @@ describe("stage decisions", () => {
       createdAt: "2026-09-04T00:00:00.000Z",
     });
     const holed = [...plan.orderedClipIds.slice(0, 3), ...plan.orderedClipIds.slice(7)];
-    const record = recordFor(plan, "run-1", "completed", holed);
-
-    const decision = stageDecision(opts, stages[0], [record]);
-    expect(decision.state.progress?.da_dk).toEqual({
-      cursor: 3,
-      maxMeasuredEnd: 10,
-      clipCount: 10,
-    });
-    expect(decision.decision).toBe("resume");
+    expect(() => recordFor(plan, "run-1", "completed", holed)).toThrow(
+      /completed but has 6 scored Samples/,
+    );
   });
 
   test("a record for another plan says nothing about this stage", () => {
@@ -626,10 +663,30 @@ describe("stage decisions", () => {
 
     const records = [
       recordFor(theirs, "run-theirs", "completed", theirs.orderedClipIds),
-      recordFor(mine, "run-mine", "completed", mine.orderedClipIds.slice(0, 2)),
+      recordFor(mine, "run-mine", "incomplete", mine.orderedClipIds.slice(0, 2)),
     ];
     expect(runIdForStage(stages[0], records, opts.batchId)).toBe("run-mine");
     expect(runIdForStage(stages[0], records, "no-such-batch")).toBeUndefined();
+  });
+
+  test("an incomplete current-batch record is RESUME even before stage state captures its id", () => {
+    const { opts, map } = seeded();
+    const stage = stageMatrix(opts, map, "2026-09-04T00:00:00.000Z")[0];
+    const plan = runPlanFor({
+      runId: "interrupted-flow",
+      batchId: opts.batchId,
+      harness: "wispr-flow",
+      model: "wispr-flow",
+      dataset: "da_dk",
+      entries: map.get("da_dk")!,
+      fromIndex: 0,
+      toIndex: 10,
+      createdAt: "2026-09-04T00:00:00.000Z",
+    });
+    const outcome = stageDecision(opts, stage, [recordFor(plan, plan.runId, "incomplete", [])]);
+
+    expect(outcome.decision).toBe("resume");
+    expect(outcome.state.runId).toBe("interrupted-flow");
   });
 });
 
@@ -721,6 +778,8 @@ describe("the commands a stage would run", () => {
     expect(multilingual).toContain("--splits test-clean,test-other");
     expect(multilingual).toContain("--languages es_419,da_dk,hu_hu");
     expect(multilingual).toContain("--from 0 --to 400");
+    expect(multilingual).toContain("--name 2026-09-v2-large-v3-q5-0");
+    expect(multilingual).not.toContain("--name 2026-09-v2-large-v3-q5_0");
 
     // The Danish-pinned model gets `--splits none`, which is how Codictate's own README
     // says a language-pinned model is measured honestly.
@@ -774,6 +833,41 @@ describe("the commands a stage would run", () => {
     expect(manualResumeCommand(opts, stages[1], "run-2").join(" ")).toContain(
       "bun run bench:stt -- --resume run-2 --batch 2026-09-v2 --out",
     );
+    expect(manualResumeCommand(opts, stages[1], "run-2")).not.toContain(
+      `# in ${opts.codictatePath}`,
+    );
+  });
+
+  test("user smoke retry skips completed Flow and generates valid fresh Codictate name", () => {
+    const root = temporaryRoot("user-smoke-");
+    const opts = options({
+      batchId: "2026-09-smoke",
+      smoke: true,
+      fromIndex: 0,
+      toIndex: 5,
+      resultsRoot: join(root, "smoke", "2026-09-smoke"),
+      batchRoot: join(root, "smoke"),
+      models: ["large-v3-q5_0"],
+    });
+    const map = manifests();
+    loadOrCreateBatchManifest(opts, map, "2026-09-04T00:00:00.000Z");
+    const stages = stageMatrix(opts, map, "2026-09-04T00:00:00.000Z");
+    const records = stages[0].plans.map((entry) => {
+      const plan = readRunPlan(join(batchDir(opts), "plans", stages[0].stageId, `${entry.dataset}.json`))!;
+      return recordFor(plan, "flow-done", "completed", plan.orderedClipIds);
+    });
+
+    expect(stageDecision(opts, stages[0], records).decision).toBe("skip-completed");
+    expect(stageDecision(opts, stages[1], records).decision).toBe("run");
+    const command = stageCommand(opts, stages[1]);
+    expect(command[command.indexOf("--name") + 1]).toBe("2026-09-smoke-large-v3-q5-0");
+  });
+
+  test("zero exit without complete records fails batch postcondition", () => {
+    expect(() => assertStageCompletedAfterExit("codictate-large-v3", "resume")).toThrow(
+      /exited 0 but did not complete/,
+    );
+    expect(() => assertStageCompletedAfterExit("codictate-large-v3", "skip-completed")).not.toThrow();
   });
 
   test("F3: a production Codictate stage writes into Codictate's own results tree", () => {

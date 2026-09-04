@@ -153,7 +153,9 @@ function winsOver(
   incumbent: { measuredAt: string; runId: string },
 ): boolean {
   if (candidate.measuredAt !== incumbent.measuredAt) {
-    return candidate.measuredAt > incumbent.measuredAt;
+    const candidateMs = Date.parse(candidate.measuredAt);
+    const incumbentMs = Date.parse(incumbent.measuredAt);
+    if (candidateMs !== incumbentMs) return candidateMs > incumbentMs;
   }
   return candidate.runId > incumbent.runId;
 }
@@ -365,7 +367,11 @@ function pooledRate(
       typeof leafErrors !== "number" ||
       typeof leafReferences !== "number" ||
       !Number.isFinite(leafErrors) ||
-      !Number.isFinite(leafReferences)
+      !Number.isFinite(leafReferences) ||
+      !Number.isInteger(leafErrors) ||
+      !Number.isInteger(leafReferences) ||
+      leafErrors < 0 ||
+      leafReferences < 0
     ) {
       skippedCount++;
       continue;

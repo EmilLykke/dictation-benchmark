@@ -91,6 +91,20 @@ private func hasMeaningfulText(_ text: String) -> Bool {
     !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 }
 
+private func latestChange(
+    event: MonotonicInstant?,
+    poll: MonotonicInstant?
+) -> (instant: MonotonicInstant?, source: TextChangeSource) {
+    switch (event, poll) {
+    case let (.some(eventAt), .some(pollAt)):
+        if pollAt.milliseconds(since: eventAt) > 0 { return (pollAt, .poll) }
+        return (eventAt, .event)
+    case let (.some(eventAt), .none): return (eventAt, .event)
+    case let (.none, .some(pollAt)): return (pollAt, .poll)
+    case (.none, .none): return (nil, .poll)
+    }
+}
+
 /// Watches the receiver window from the stop edge until the pasted text stops
 /// changing, and reports when it last changed.
 ///
@@ -139,10 +153,11 @@ public func observeResponseWindow(
             if textIsMeaningful, pollFirstTextAt == nil { pollFirstTextAt = noticedAt }
         }
 
-        // Event stamps win whenever there are any. They are earlier and truer: a
-        // polled stamp is the change plus however long it sat unnoticed.
-        let source: TextChangeSource = snapshot.lastChangeAt == nil ? .poll : .event
-        let lastChangeAt = snapshot.lastChangeAt ?? pollLastChangeAt
+        // Event stamps win for the same change, but a newer poll must win if event
+        // delivery stalls while live text keeps changing.
+        let latest = latestChange(event: snapshot.lastChangeAt, poll: pollLastChangeAt)
+        let source = latest.source
+        let lastChangeAt = latest.instant
         let firstTextAt = snapshot.firstMeaningfulChangeAt ?? pollFirstTextAt
         if firstTextAt != nil { sawFirstText = true }
 
@@ -165,12 +180,13 @@ public func observeResponseWindow(
         sleep(Double(settings.pollIntervalMs) / 1_000)
     }
 
-    let source: TextChangeSource = latestSnapshot.lastChangeAt == nil ? .poll : .event
+    let latest = latestChange(event: latestSnapshot.lastChangeAt, poll: pollLastChangeAt)
+    let source = latest.source
     return ResponseWindowObservation(
         outcome: .timedOut,
         text: lastPolledText,
         firstMeaningfulTextAt: latestSnapshot.firstMeaningfulChangeAt ?? pollFirstTextAt,
-        lastTextChangeAt: latestSnapshot.lastChangeAt ?? pollLastChangeAt,
+        lastTextChangeAt: latest.instant,
         stabilityConfirmedAt: nil,
         source: source,
         changeCount: source == .event ? latestSnapshot.changeCount : polledChangeCount,
