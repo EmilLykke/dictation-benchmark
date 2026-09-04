@@ -27,6 +27,15 @@ export interface CompatibleSample {
 
 interface CompatibleDataset {
   samples: CompatibleSample[];
+  /**
+   * The consumable range this run measured, when it recorded one. Read only to
+   * decide whether a dataset finished: with `--samples` as a delta and exhaustion
+   * truncating a range, `samples.length` no longer has to reach `config.samples`.
+   */
+  selection?: {
+    startIndex: number;
+    plannedEndIndex: number;
+  };
 }
 
 export interface CompatibleRun {
@@ -43,7 +52,13 @@ export interface CompatibleRun {
   };
   config: {
     datasets: DatasetId[];
-    samples: number;
+    /**
+     * Consumable clips this run set out to measure per dataset. Absent when the depth
+     * was given as `--to`, in which case the per-dataset ranges carry it instead.
+     */
+    samples?: number;
+    /** Target depth, when the run was launched with `--to`. */
+    to?: number;
     leadMs: number;
     tailMs: number;
     stableMs: number;
@@ -191,7 +206,7 @@ export function buildCodictateResults(run: CompatibleRun): CodictateCompatibleRe
     },
     runDate: run.completedAt ?? run.createdAt,
     config: {
-      sampleSize: run.config.samples,
+      sampleSize: sampleSize(run),
       warmupCount: 3,
       normalization: "whisper-basic",
       stableMs: run.config.stableMs,
@@ -210,7 +225,7 @@ export function buildCodictateCheckpoint(
 ): CodictateCompatibleCheckpoint {
   const { librispeech, fleurs } = completedResults(run);
   const current = currentDataset ? run.results[currentDataset] : undefined;
-  const isComplete = current !== undefined && current.samples.length >= run.config.samples;
+  const isComplete = current !== undefined && isDatasetComplete(current, run.config);
   return {
     harnesses: [EXTERNAL_PRODUCT_HARNESS],
     librispeech,
@@ -229,6 +244,39 @@ export function buildCodictateCheckpoint(
   };
 }
 
+/**
+ * Whether a dataset ran to the end of the range this run planned for it.
+ *
+ * Prefers the recorded range over `config.samples`, because `config.samples` is now
+ * a delta measured from a cursor and because exhaustion can legitimately shorten a
+ * range: a dataset with 40 clips left under `--samples 400` is complete at 40, and
+ * comparing against 400 would silently drop it out of `stt.json`.
+ */
+function isDatasetComplete(
+  result: CompatibleDataset,
+  config: CompatibleRun["config"],
+): boolean {
+  if (result.selection) {
+    return scoredSamples(result.samples).length
+      >= result.selection.plannedEndIndex - result.selection.startIndex;
+  }
+  if (config.samples === undefined) return true;
+  return result.samples.length >= config.samples;
+}
+
+/**
+ * Scored clips per dataset in this run. Not a corpus depth: a run is one session,
+ * and `utteranceCount` on each leaf is the exact per-dataset count.
+ */
+function sampleSize(run: CompatibleRun): number {
+  if (run.config.samples !== undefined) return run.config.samples;
+  const counts = run.config.datasets
+    .map((dataset) => run.results[dataset])
+    .filter((result): result is CompatibleDataset => result !== undefined)
+    .map((result) => scoredSamples(result.samples).length);
+  return counts.length === 0 ? 0 : Math.max(...counts);
+}
+
 function completedResults(run: CompatibleRun): {
   librispeech: DatasetResults;
   fleurs: DatasetResults;
@@ -237,7 +285,7 @@ function completedResults(run: CompatibleRun): {
   const fleurs: DatasetResults = {};
   for (const dataset of run.config.datasets) {
     const result = run.results[dataset];
-    if (!result || result.samples.length < run.config.samples) continue;
+    if (!result || !isDatasetComplete(result, run.config)) continue;
     const target = datasetType(dataset) === "librispeech" ? librispeech : fleurs;
     target[dataset] = {
       [EXTERNAL_PRODUCT_HARNESS]: {

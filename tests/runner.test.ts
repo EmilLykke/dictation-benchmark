@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { DATASET_IDS, type ManifestEntry } from "../src/types";
 import {
@@ -8,31 +9,92 @@ import {
   type RunConfig,
 } from "../src/runner";
 
+async function dryRun(...args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const root = resolve(import.meta.dir, "..");
+  const child = Bun.spawn(["bun", resolve(root, "src/runner.ts"), ...args, "--dry-run"], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { exitCode, stdout, stderr };
+}
+
 describe("benchmark CLI defaults", () => {
   test("plans every dataset when --datasets is omitted", async () => {
-    const root = resolve(import.meta.dir, "..");
-    const process = Bun.spawn(
-      [
-        "bun",
-        resolve(root, "src/runner.ts"),
-        "--name",
-        "all-datasets-default",
-        "--samples",
-        "4",
-        "--dry-run",
-      ],
-      { cwd: root, stdout: "pipe", stderr: "pipe" },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      process.exited,
-      new Response(process.stdout).text(),
-      new Response(process.stderr).text(),
-    ]);
+    const { exitCode, stdout, stderr } = await dryRun("--name", "all-datasets-default", "--samples", "4");
 
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(stdout).toContain(`Datasets:  ${DATASET_IDS.join(", ")}`);
-    expect(stdout).toContain("Clips:     20 (3 warmups per dataset)");
+    // Warmups are reserved, so they sit outside the 4 clips --samples asked for:
+    // five datasets contribute 3 replays plus 4 scored clips each.
+    expect(stdout).toContain("Clips:     35 (15 warmup replays + 20 scored)");
+    expect(stdout).toContain("Depth:     --samples 4 (delta: 4 more per dataset, from the cursor)");
+  });
+
+  test("prints one plan preview line per dataset before anything runs", async () => {
+    const { exitCode, stdout } = await dryRun("--name", "plan-preview", "--samples", "4");
+
+    expect(exitCode).toBe(0);
+    for (const dataset of DATASET_IDS) {
+      // `--samples` is a delta, so the operator has to be able to read off which
+      // consumable clips a command is about to spend before it spends them.
+      const line = stdout.match(
+        new RegExp(
+          `^  ${dataset}: cursor (\\d+) -> (\\d+) \\(clips (\\d+)-(\\d+) of (\\d+) consumable, (\\d+) remaining after\\)$`,
+          "m",
+        ),
+      );
+      expect(line, dataset).not.toBeNull();
+      const [cursor, end, firstClip, lastClip, consumable, remaining] = line!.slice(1).map(Number);
+      expect(end - cursor, dataset).toBe(4);
+      expect(firstClip, dataset).toBe(cursor + 1);
+      expect(lastClip, dataset).toBe(end);
+      expect(remaining, dataset).toBe(consumable - end);
+    }
+  });
+
+  test("--dry-run exits without writing a run directory", async () => {
+    const { exitCode, stdout } = await dryRun("--name", "dry-run-writes-nothing", "--samples", "4");
+    const runId = stdout.match(/^Run:\s+(\S+)$/m)?.[1];
+
+    expect(exitCode).toBe(0);
+    expect(runId).toBeDefined();
+    expect(existsSync(resolve(import.meta.dir, "..", "results", runId!))).toBe(false);
+  });
+
+  test("rejects --samples and --to together", async () => {
+    const { exitCode, stderr } = await dryRun("--name", "both-depths", "--samples", "4", "--to", "10");
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("not both");
+  });
+
+  test("a --to depth already reached is a no-op rather than a repeat", async () => {
+    const { exitCode, stdout } = await dryRun("--name", "already-there", "--to", "1");
+
+    expect(exitCode).toBe(0);
+    // The committed 400-clip run recorded depth 397 for every dataset, so a target of
+    // 1 is behind the cursor everywhere.
+    for (const dataset of DATASET_IDS) {
+      expect(stdout).toContain(`${dataset}: cursor 397 -> 397 (nothing to run:`);
+    }
+  });
+
+  test("plans every dataset even where the requested depth exhausts the corpus", async () => {
+    const { exitCode, stdout } = await dryRun("--name", "exhaustion", "--to", "100000");
+
+    // buildPlan used to throw when one dataset was short, aborting the whole run.
+    expect(exitCode).toBe(0);
+    for (const dataset of DATASET_IDS) {
+      expect(stdout).toContain(`${dataset}: cursor 397 ->`);
+      expect(stdout).toContain("EXHAUSTED");
+    }
   });
 });
 

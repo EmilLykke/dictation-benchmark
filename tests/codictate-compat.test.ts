@@ -139,7 +139,7 @@ describe("Codictate-compatible artifacts", () => {
     // hypothesis, so it is still an utterance and `sampleSize - warmupCount -
     // utteranceCount` sees nothing wrong.
     expect(leaf.utteranceCount).toBe(4);
-    expect(run.config.samples - 3 - leaf.utteranceCount).toBe(-2);
+    expect(run.config.samples! - 3 - leaf.utteranceCount).toBe(-2);
     expect(leaf.failures).toBe(3);
     expect(leaf.failuresByStatus).toEqual({ timeout: 2, failed: 1 });
   });

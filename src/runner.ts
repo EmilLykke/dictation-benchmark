@@ -7,6 +7,21 @@ import {
   WisprFlowAdapter,
 } from "./adapters/wispr-flow";
 import { buildManifest } from "./manifest";
+import {
+  deriveCursors,
+  formatPlanLine,
+  ManifestFingerprintMismatch,
+  manifestFingerprint,
+  planDataset,
+  resumePlan,
+  scanRunRecords,
+  selectionFor,
+  WARMUP_COUNT,
+  type DatasetPlan,
+  type DatasetSelection,
+  type DepthRequest,
+  type FingerprintConflict,
+} from "./selection";
 import { computeCer, computeWer, type CerResult, type WerResult } from "./scoring";
 import {
   DATASET_IDS,
@@ -22,8 +37,13 @@ import {
   portableRun,
 } from "./portable-paths";
 
-const WARMUP_COUNT = 3;
 const DEFAULT_TIMEOUT_MS = 45_000;
+
+/**
+ * Consumable clips `--samples` runs when the flag is omitted. A delta, not a depth:
+ * see `DepthRequest`.
+ */
+const DEFAULT_SAMPLES = 20;
 
 /**
  * How often the bridge re-reads the receiver window while waiting for text.
@@ -49,7 +69,23 @@ export interface RunConfig {
    */
   codictatePath: string;
   datasets: DatasetId[];
-  samples: number;
+  /**
+   * `--samples N`: a DELTA, not a depth. N consumable clips that this repo has not
+   * measured before for this product, taken from wherever the cursor for each
+   * dataset currently sits. Destructive by default — running the same command twice
+   * consumes twice — which is why a plan preview is printed before any clip runs.
+   *
+   * Absent when the depth was expressed with `--to` instead.
+   */
+  samples?: number;
+  /**
+   * `--to N`: a TARGET DEPTH. Run whatever is needed for N consumable clips to have
+   * been measured in total, and do nothing at all where that is already true. This
+   * is what makes re-running an interrupted overnight command safe.
+   *
+   * Absent when the depth was expressed with `--samples` instead.
+   */
+  to?: number;
   deviceName: string;
   hotkey: { keyCode: number; modifiers: ["option"] };
   leadMs: number;
@@ -108,6 +144,19 @@ interface SampleResult {
 
 interface DatasetResult {
   samples: SampleResult[];
+  /**
+   * The half-open range of consumable entries this run measured for this dataset,
+   * plus the fingerprint of the ordered manifest those offsets index into.
+   *
+   * This is the whole of the accumulation record. The cursor for a dataset is the
+   * maximum `endIndex` over every run in `results/` whose `manifestFingerprint`
+   * matches the current manifest, so the results tree stays the source of truth and
+   * there is no separate ledger that can drift away from it.
+   *
+   * Absent on runs recorded before this scheme existed; such a run contributes
+   * nothing to a cursor until it is backfilled (see `scripts/backfill-selection.ts`).
+   */
+  selection?: DatasetSelection;
   aggregate?: {
     wer: number;
     substitutions: number;
@@ -191,9 +240,13 @@ async function main(): Promise<void> {
     };
   }
 
-  const plan = buildPlan(run.config);
-  printPlan(run, runDir, plan);
+  const plans = buildPlan(run, resultsRoot);
+  printPlan(run, runDir, plans);
   if (options.dryRun) return;
+  if (plans.every((plan) => plan.clips.length === 0)) {
+    console.log("\nNothing left to measure at this depth. Flow was not touched.");
+    return;
+  }
 
   const adapter = new WisprFlowAdapter();
   const stop = async () => adapter.close().catch(() => undefined);
@@ -224,10 +277,36 @@ async function main(): Promise<void> {
     saveRun(runDir, run);
     saveCheckpoint(runDir, run);
 
-    for (const [dataset, entries] of plan) {
+    for (const plan of plans) {
+      const dataset = plan.dataset as DatasetId;
+      if (plan.clips.length === 0) {
+        console.log(`\n[${dataset}] ${formatPlanLine(plan)}`);
+        continue;
+      }
       const result = (run.results[dataset] ??= { samples: [] });
+      const entries = sessionEntries(plan);
       const completed = new Set(result.samples.map((sample) => sample.id));
-      console.log(`\n[${dataset}] ${entries.length} clips`);
+      if (!result.selection && result.samples.some((sample) => !sample.warmup)) {
+        throw new Error(
+          `${dataset} in ${runDir} holds scored samples but no recorded range, so this run ` +
+            `predates consumable ranges. Backfill it with scripts/backfill-selection.ts before ` +
+            `resuming, or start a new run; continuing would mix two selection schemes in one ` +
+            `dataset and record a depth neither of them reached.`,
+        );
+      }
+      result.selection = selectionFor(plan, measuredPrefix(plan, completed));
+      saveRun(runDir, run);
+      if (plan.truncated) {
+        console.warn(
+          `\n[${dataset}] EXHAUSTED: depth ${plan.requestedEndIndex} requested but only ` +
+            `${plan.consumableCount} consumable clips exist. Running the ${plan.clips.length} that ` +
+            `remain and recording depth ${plan.endIndex}; no clip is re-used.`,
+        );
+      }
+      console.log(
+        `\n[${dataset}] ${entries.length} clips: ${plan.warmups.length} warmup replays + ` +
+          `consumable ${plan.startIndex + 1}-${plan.endIndex} of ${plan.consumableCount}`,
+      );
 
       for (let index = 0; index < entries.length; index++) {
         const entry = entries[index];
@@ -266,6 +345,10 @@ async function main(): Promise<void> {
           diagnostic: transcription.diagnostic,
         });
         result.aggregate = aggregate(result.samples);
+        completed.add(entry.id);
+        // Kept honest after every clip, so a run that dies halfway advances the
+        // cursor by the clips it finished and not by the clips it intended.
+        result.selection = selectionFor(plan, measuredPrefix(plan, completed));
         saveRun(runDir, run);
         saveCheckpoint(runDir, run, dataset);
         console.log(
@@ -357,18 +440,86 @@ function withCodictatePath(config: RunConfig, checkout: string): RunConfig {
   return { ...config, codictatePath: checkout };
 }
 
-function buildPlan(config: RunConfig): Map<DatasetId, ManifestEntry[]> {
+/** How the operator expressed the depth they want, as a value the planner can use. */
+export function depthRequest(config: RunConfig): DepthRequest {
+  if (typeof config.to === "number") return { kind: "target", to: config.to };
+  return { kind: "delta", samples: config.samples ?? DEFAULT_SAMPLES };
+}
+
+/**
+ * Works out which consumable clips this session should measure, per dataset.
+ *
+ * Deliberately does not throw when a dataset has fewer clips left than were asked
+ * for. It used to: `buildPlan` rejected the whole run if any one dataset was short,
+ * which would abort an overnight command that could still have done useful work on
+ * the other four datasets. Exhaustion now truncates that dataset's range, is logged
+ * loudly, is recorded as the depth actually reached, and the run continues. Nothing
+ * ever wraps around and re-uses a clip.
+ *
+ * It does throw on a fingerprint mismatch, because then every stored offset is
+ * meaningless. See `ManifestFingerprintMismatch`.
+ */
+function buildPlan(run: BenchmarkRun, resultsRoot: string): DatasetPlan[] {
+  const config = run.config;
   const datasetsDir = datasetsRoot(config.codictatePath);
   if (!existsSync(datasetsDir)) throw new Error(`Codictate benchmark data missing: ${datasetsDir}`);
-  const plan = new Map<DatasetId, ManifestEntry[]>();
+
+  const manifests = new Map<DatasetId, ManifestEntry[]>();
+  const fingerprints = new Map<string, { fingerprint: string; entryCount: number }>();
   for (const dataset of config.datasets) {
-    const entries = buildManifest(datasetsDir, dataset).slice(0, config.samples);
-    if (entries.length < config.samples) {
-      throw new Error(`${dataset} has ${entries.length} clips; requested ${config.samples}`);
-    }
-    plan.set(dataset, entries);
+    const entries = buildManifest(datasetsDir, dataset);
+    manifests.set(dataset, entries);
+    fingerprints.set(dataset, {
+      fingerprint: manifestFingerprint(entries),
+      entryCount: entries.length,
+    });
   }
-  return plan;
+
+  const records = scanRunRecords(resultsRoot, { productId: run.product.id });
+  const cursors = deriveCursors(records, fingerprints, datasetsDir);
+  const request = depthRequest(config);
+
+  // A resumed run keeps the range it recorded rather than recomputing one from the
+  // cursor: its own finished clips have already advanced that cursor, so replanning
+  // would step past them and leave a hole in the middle of the run.
+  const conflicts: FingerprintConflict[] = [];
+  const plans: DatasetPlan[] = [];
+  for (const [dataset, entries] of manifests) {
+    const recorded = run.results[dataset]?.selection;
+    const current = fingerprints.get(dataset)!;
+    if (!recorded) {
+      plans.push(planDataset(dataset, entries, cursors.get(dataset) ?? 0, request));
+      continue;
+    }
+    if (recorded.manifestFingerprint !== current.fingerprint) {
+      conflicts.push({
+        dataset,
+        runId: run.runId,
+        recordedFingerprint: recorded.manifestFingerprint,
+        recordedEndIndex: recorded.endIndex,
+        currentFingerprint: current.fingerprint,
+        currentEntryCount: current.entryCount,
+      });
+      continue;
+    }
+    plans.push(resumePlan(dataset, entries, recorded));
+  }
+  if (conflicts.length > 0) throw new ManifestFingerprintMismatch(conflicts, datasetsDir);
+  return plans;
+}
+
+/**
+ * How much of this dataset's planned range is already captured.
+ *
+ * Counted as the leading run of planned clips present in the run directory rather
+ * than as "samples that are not warmups", so the recorded `endIndex` stays the
+ * honest contiguous depth even in a run directory that also holds samples from
+ * outside this range.
+ */
+function measuredPrefix(plan: DatasetPlan, captured: ReadonlySet<string>): number {
+  let measured = 0;
+  while (measured < plan.clips.length && captured.has(plan.clips[measured].id)) measured += 1;
+  return measured;
 }
 
 function aggregate(samples: SampleResult[]): DatasetResult["aggregate"] {
@@ -443,29 +594,48 @@ function osVersion(): string {
   }
 }
 
-function printPlan(
-  run: BenchmarkRun,
-  runDir: string,
-  plan: Map<DatasetId, ManifestEntry[]>,
-): void {
-  const entries = [...plan.values()].flat();
+/** Clips a dataset actually plays this session: the warmup replays, then the range. */
+function sessionEntries(plan: DatasetPlan): ManifestEntry[] {
+  return plan.clips.length === 0 ? [] : [...plan.warmups, ...plan.clips];
+}
+
+/**
+ * Prints the plan preview, always, before a single clip runs.
+ *
+ * `--samples` is a delta, so the same command run twice measures twice as many
+ * clips. An operator has to be able to read off exactly which consumable clips a
+ * command is about to spend, per dataset, before it spends them.
+ */
+function printPlan(run: BenchmarkRun, runDir: string, plans: DatasetPlan[]): void {
+  const entries = plans.flatMap(sessionEntries);
+  const scored = plans.reduce((total, plan) => total + plan.clips.length, 0);
+  const warmupReplays = plans.filter((plan) => plan.clips.length > 0).length * WARMUP_COUNT;
   const audioSeconds = entries.reduce((total, entry) => total + entry.audioDurationSec, 0);
+  const request = depthRequest(run.config);
   console.log(`Run:       ${run.runId}`);
   console.log(`Product:   Wispr Flow`);
-  console.log(`Datasets:  ${[...plan.keys()].join(", ")}`);
-  console.log(`Clips:     ${entries.length} (${WARMUP_COUNT} warmups per dataset)`);
+  console.log(`Datasets:  ${plans.map((plan) => plan.dataset).join(", ")}`);
+  console.log(
+    request.kind === "delta"
+      ? `Depth:     --samples ${request.samples} (delta: ${request.samples} more per dataset, from the cursor)`
+      : `Depth:     --to ${request.to} (target depth: run until ${request.to} per dataset are measured)`,
+  );
+  console.log(`Warmups:   ${WARMUP_COUNT} per dataset, replayed unscored, never consumed`);
+  console.log(`Clips:     ${entries.length} (${warmupReplays} warmup replays + ${scored} scored)`);
   console.log(`Audio:     ${(audioSeconds / 60).toFixed(1)} minutes at 1.0×`);
   console.log(`Input:     ${run.config.deviceName}`);
   console.log(`Timeout:   ${run.config.timeoutMs}ms after dictation stops (flat; same for every clip)`);
   console.log(`Polling:   every ${run.config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS}ms (granularity of stopToFirstTextMs)`);
   console.log(`Output:    ${runDir}`);
+  console.log("Plan:");
+  for (const plan of plans) console.log(`  ${formatPlanLine(plan)}`);
 }
 
 function parseArgs(args: string[]): CliOptions {
   const config: RunConfig = {
     codictatePath: resolve(import.meta.dir, "../../codictate"),
     datasets: [...DATASET_IDS],
-    samples: 20,
+    samples: DEFAULT_SAMPLES,
     deviceName: "BlackHole 2ch",
     hotkey: { keyCode: 49, modifiers: ["option"] },
     leadMs: 500,
@@ -476,6 +646,8 @@ function parseArgs(args: string[]): CliOptions {
     configurationNote: "",
   };
   const options: CliOptions = { dryRun: false, config };
+  let sawSamples = false;
+  let sawTo = false;
 
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
@@ -490,7 +662,8 @@ function parseArgs(args: string[]): CliOptions {
       case "--dry-run": options.dryRun = true; break;
       case "--codictate": config.codictatePath = resolve(value()); break;
       case "--datasets": config.datasets = parseDatasets(value()); break;
-      case "--samples": config.samples = positiveInteger(value(), flag); break;
+      case "--samples": config.samples = positiveInteger(value(), flag); sawSamples = true; break;
+      case "--to": config.to = positiveInteger(value(), flag); sawTo = true; break;
       case "--timeout-ms": config.timeoutMs = positiveInteger(value(), flag); break;
       case "--poll-interval-ms": config.pollIntervalMs = positiveInteger(value(), flag); break;
       case "--device": config.deviceName = value(); break;
@@ -498,7 +671,14 @@ function parseArgs(args: string[]): CliOptions {
       default: throw new Error(`Unknown flag: ${flag}`);
     }
   }
-  if (config.samples <= WARMUP_COUNT) throw new Error(`--samples must be greater than ${WARMUP_COUNT}`);
+  if (sawSamples && sawTo) {
+    throw new Error(
+      "Use --samples (a delta: N more from the cursor) or --to (a target depth), not both",
+    );
+  }
+  // `--to` supersedes the default delta; leaving both set would make the record
+  // claim a delta the run never used.
+  if (sawTo) delete config.samples;
   if (options.resume && options.name) throw new Error("Use --resume or --name, not both");
   return options;
 }

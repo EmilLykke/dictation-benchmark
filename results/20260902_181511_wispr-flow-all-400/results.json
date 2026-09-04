@@ -8454,6 +8454,18 @@
         "scoredSamples": 397,
         "failures": 0,
         "meanStopToStableTextMs": 1370.1939006296152
+      },
+      "selection": {
+        "selectionVersion": 1,
+        "warmupCount": 3,
+        "manifestFingerprint": "sha256:66b18c17192a258e3388d4f8bca5f2c3a041f2158465472082dc51a95fe668ab",
+        "manifestEntryCount": 2620,
+        "consumableCount": 2617,
+        "startIndex": 0,
+        "endIndex": 397,
+        "plannedEndIndex": 397,
+        "requestedEndIndex": 397,
+        "truncated": false
       }
     },
     "test-other": {
@@ -16868,6 +16880,18 @@
         "scoredSamples": 397,
         "failures": 0,
         "meanStopToStableTextMs": 1360.5516419302608
+      },
+      "selection": {
+        "selectionVersion": 1,
+        "warmupCount": 3,
+        "manifestFingerprint": "sha256:d38cfa48668d32ec927a94127c1724e146fecfb2bceba6be44ab2b62a91343df",
+        "manifestEntryCount": 2939,
+        "consumableCount": 2936,
+        "startIndex": 0,
+        "endIndex": 397,
+        "plannedEndIndex": 397,
+        "requestedEndIndex": 397,
+        "truncated": false
       }
     },
     "es_419": {
@@ -28085,6 +28109,18 @@
         "scoredSamples": 397,
         "failures": 0,
         "meanStopToStableTextMs": 1532.4109531469849
+      },
+      "selection": {
+        "selectionVersion": 1,
+        "warmupCount": 3,
+        "manifestFingerprint": "sha256:a75b065733aff80d1cf67d4a0ec27e12dbdbb7a6792a5c84eee109dbf989e597",
+        "manifestEntryCount": 908,
+        "consumableCount": 905,
+        "startIndex": 0,
+        "endIndex": 397,
+        "plannedEndIndex": 397,
+        "requestedEndIndex": 397,
+        "truncated": false
       }
     },
     "da_dk": {
@@ -39303,6 +39339,18 @@
         "scoredSamples": 397,
         "failures": 1,
         "meanStopToStableTextMs": 2890.9558512345707
+      },
+      "selection": {
+        "selectionVersion": 1,
+        "warmupCount": 3,
+        "manifestFingerprint": "sha256:8dfc22d35e2bcebd8b4cd59bd0574a1fe8348fb0fb52da2397e867554a3f2f9b",
+        "manifestEntryCount": 930,
+        "consumableCount": 927,
+        "startIndex": 0,
+        "endIndex": 397,
+        "plannedEndIndex": 397,
+        "requestedEndIndex": 397,
+        "truncated": false
       }
     },
     "hu_hu": {
@@ -50533,6 +50581,18 @@
         "scoredSamples": 397,
         "failures": 13,
         "meanStopToStableTextMs": 2869.824480265379
+      },
+      "selection": {
+        "selectionVersion": 1,
+        "warmupCount": 3,
+        "manifestFingerprint": "sha256:9ce1d747593941723887c9175bf60a015121cb22a10ac5f8f6f12fef9cc787ee",
+        "manifestEntryCount": 905,
+        "consumableCount": 902,
+        "startIndex": 0,
+        "endIndex": 397,
+        "plannedEndIndex": 397,
+        "requestedEndIndex": 397,
+        "truncated": false
       }
     }
   },
