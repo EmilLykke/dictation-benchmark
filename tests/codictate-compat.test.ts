@@ -148,6 +148,31 @@ describe("Codictate-compatible artifacts", () => {
     expect(leaf.failuresByStatus).toEqual({ timeout: 0, failed: 0 });
   });
 
+  test("averages the latency of clips that recorded one, and omits it when none did", () => {
+    const run = runWith([
+      // A warmup is excluded, and a timed-out clip records no latency to average.
+      sample(true, { stopToStableTextMs: 9_000 }),
+      sample(false, { stopToStableTextMs: 1_000 }),
+      sample(false, { stopToStableTextMs: 2_000 }),
+      sample(false, { status: "timeout", stopToStableTextMs: null }),
+    ]);
+    run.config.samples = 4;
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(leaf.meanStopToStableTextMs).toBe(1_500);
+
+    run.results["test-clean"]!.samples = [
+      sample(false, { status: "timeout", stopToStableTextMs: null }),
+    ];
+    run.config.samples = 1;
+    // Absent rather than 0: nothing was measured, and 0 ms would read as instant.
+    expect(
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"]
+        .meanStopToStableTextMs,
+    ).toBeUndefined();
+  });
+
   test("checkpoints Codictate partial totals and promotes completed dataset", () => {
     const run = runWith([
       sample(true),
@@ -211,6 +236,38 @@ describe("committed run records", () => {
     expect(emitted["hu_hu"]).toBe(13);
     expect(emitted["da_dk"]).toBe(1);
     expect(emitted["test-clean"]).toBe(0);
+  });
+
+  test("publish the same stop-to-stable-text latency the run's own aggregate recorded", () => {
+    const emitted = Object.fromEntries(
+      Object.entries(leaves).map(([dataset, leaf]) => [
+        dataset,
+        leaf["external-product"]["wispr-flow"].meanStopToStableTextMs,
+      ]),
+    );
+    const aggregated = Object.fromEntries(
+      Object.entries(
+        record.results as Record<string, { aggregate: { meanStopToStableTextMs: number } }>,
+      ).map(([dataset, result]) => [dataset, result.aggregate.meanStopToStableTextMs]),
+    );
+
+    expect(Object.keys(emitted).sort()).toEqual([
+      "da_dk",
+      "es_419",
+      "hu_hu",
+      "test-clean",
+      "test-other",
+    ]);
+    expect(emitted).toEqual(aggregated);
+
+    // Named rather than only compared, because this is the figure the site publishes as
+    // the product's response time, and `meanRTF` is not: the harness plays every clip at
+    // 1.0x real time, so `meanRTF` cannot fall below 1.0 whatever the product does.
+    for (const [dataset, latency] of Object.entries(emitted)) {
+      expect([dataset, latency! > 1_000 && latency! < 3_000]).toEqual([dataset, true]);
+      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
+      expect([dataset, leaf.meanRTF > 1]).toEqual([dataset, true]);
+    }
   });
 
   test("publish a breakdown that adds back up to the failure count", () => {

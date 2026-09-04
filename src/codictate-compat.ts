@@ -63,6 +63,21 @@ export interface CodictateModelDatasetResult {
   /** Reference characters the CER was divided by. Absent wherever `cer` is absent. */
   referenceChars?: number;
   meanRTF: number;
+  /**
+   * Mean milliseconds from the stop hotkey to the moment the pasted text stopped
+   * changing, averaged over the scored clips that recorded one. Carried straight from
+   * this run's `results.json` aggregate, where it is computed the same way.
+   *
+   * This, not `meanRTF`, is the product's response time. The harness plays every clip
+   * through a virtual microphone at 1.0x real time, so `totalWallSec` can never fall
+   * below `totalAudioSec` and `meanRTF` is floored at 1.0 by the harness itself - about
+   * two thirds of it is playback we chose to do, not the product responding.
+   *
+   * Optional for the same reason `cer` is: a timed-out clip records no latency at all,
+   * so a dataset that timed out on every clip has nothing to average. Absent then,
+   * rather than 0, which would read as instant.
+   */
+  meanStopToStableTextMs?: number;
   peakRSS_MB: null;
   utteranceCount: number;
   /**
@@ -210,7 +225,11 @@ function modelResult(
   config: CompatibleRun["config"],
 ): CodictateModelDatasetResult {
   const partial = partialProgress(samples, config);
-  const failed = scoredSamples(samples).filter((sample) => sample.status !== "ok");
+  const scored = scoredSamples(samples);
+  const failed = scored.filter((sample) => sample.status !== "ok");
+  const latencies = scored
+    .map((sample) => sample.stopToStableTextMs)
+    .filter((value): value is number => value !== null);
   return {
     wer: partial.totalRefWords === 0 ? 0 : partial.totalWer / partial.totalRefWords,
     referenceWords: partial.totalRefWords,
@@ -221,6 +240,9 @@ function modelResult(
         }
       : {}),
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
+    ...(latencies.length > 0
+      ? { meanStopToStableTextMs: sum(latencies, (value) => value) / latencies.length }
+      : {}),
     peakRSS_MB: null,
     utteranceCount: partial.utterancesDone,
     failures: failed.length,
