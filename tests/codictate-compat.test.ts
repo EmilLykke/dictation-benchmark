@@ -1,13 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   buildCodictateCheckpoint,
   buildCodictateResults,
   type CompatibleRun,
+  type CompatibleSample,
 } from "../src/codictate-compat";
 
 function sample(warmup: boolean, overrides: Record<string, unknown> = {}) {
   return {
     warmup,
+    // Narrowed, since an override supplies the failing statuses and the helper's own
+    // inferred `string` would not fit the sample type.
+    status: "ok" as CompatibleSample["status"],
     audioDurationSec: 2,
     wallClockMs: 3_000,
     audioPlaybackMs: 2_000,
@@ -110,6 +116,38 @@ describe("Codictate-compatible artifacts", () => {
     expect(leaf.referenceWords).toBe(4);
   });
 
+  test("publishes the failures a consumer cannot derive", () => {
+    const run = runWith([
+      // A warmup failure is not part of the scored sample, so it is not counted.
+      sample(true, { status: "timeout" }),
+      sample(false),
+      sample(false, { status: "timeout" }),
+      sample(false, { status: "timeout" }),
+      sample(false, { status: "failed" }),
+    ]);
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+
+    // The reason the count has to be published: a failed clip is scored as an empty
+    // hypothesis, so it is still an utterance and `sampleSize - warmupCount -
+    // utteranceCount` sees nothing wrong.
+    expect(leaf.utteranceCount).toBe(4);
+    expect(run.config.samples - 3 - leaf.utteranceCount).toBe(-2);
+    expect(leaf.failures).toBe(3);
+    expect(leaf.failuresByStatus).toEqual({ timeout: 2, failed: 1 });
+  });
+
+  test("publishes a zeroed breakdown when nothing failed", () => {
+    const run = runWith([sample(false)]);
+    run.config.samples = 1;
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(leaf.failures).toBe(0);
+    expect(leaf.failuresByStatus).toEqual({ timeout: 0, failed: 0 });
+  });
+
   test("checkpoints Codictate partial totals and promotes completed dataset", () => {
     const run = runWith([
       sample(true),
@@ -145,5 +183,50 @@ describe("Codictate-compatible artifacts", () => {
     expect(
       completed.librispeech["test-clean"]?.["external-product"]["wispr-flow"].utteranceCount,
     ).toBe(2);
+  });
+});
+
+describe("committed run records", () => {
+  const runDir = resolve(import.meta.dir, "../results/20260902_181511_wispr-flow-all-400");
+  const record = JSON.parse(readFileSync(resolve(runDir, "results.json"), "utf8"));
+  const built = buildCodictateResults(record as CompatibleRun);
+  const leaves = { ...built.librispeech, ...built.fleurs };
+
+  test("publish the same failure count the run's own aggregate recorded", () => {
+    const emitted = Object.fromEntries(
+      Object.entries(leaves).map(([dataset, leaf]) => [
+        dataset,
+        leaf["external-product"]["wispr-flow"].failures,
+      ]),
+    );
+    const aggregated = Object.fromEntries(
+      Object.entries(record.results as Record<string, { aggregate: { failures: number } }>).map(
+        ([dataset, result]) => [dataset, result.aggregate.failures],
+      ),
+    );
+
+    expect(emitted).toEqual(aggregated);
+    // Named rather than only compared, so the run that motivated the field cannot go
+    // back to reporting a clean sweep without a test saying so.
+    expect(emitted["hu_hu"]).toBe(13);
+    expect(emitted["da_dk"]).toBe(1);
+    expect(emitted["test-clean"]).toBe(0);
+  });
+
+  test("publish a breakdown that adds back up to the failure count", () => {
+    for (const [dataset, harnesses] of Object.entries(leaves)) {
+      const leaf = harnesses["external-product"]["wispr-flow"];
+      expect([dataset, leaf.failuresByStatus.timeout + leaf.failuresByStatus.failed]).toEqual([
+        dataset,
+        leaf.failures,
+      ]);
+    }
+
+    // Every failure in this run was the clip running out its budget, not the product
+    // erroring, and the site is meant to be able to say so.
+    expect(leaves["hu_hu"]["external-product"]["wispr-flow"].failuresByStatus).toEqual({
+      timeout: 13,
+      failed: 0,
+    });
   });
 });

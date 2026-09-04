@@ -4,8 +4,14 @@ import type { CerResult, WerResult } from "./scoring";
 export const CODICTATE_MODEL_ID = "wispr-flow";
 export const EXTERNAL_PRODUCT_HARNESS = "external-product";
 
-interface CompatibleSample {
+export interface CompatibleSample {
   warmup: boolean;
+  /**
+   * How the clip ended. A `timeout` or `failed` clip is scored as an empty hypothesis,
+   * so it is indistinguishable from a badly transcribed one once only rates survive -
+   * which is why the counts below are published rather than left to be derived.
+   */
+  status: "ok" | "timeout" | "failed";
   audioDurationSec: number;
   wallClockMs?: number;
   audioPlaybackMs: number;
@@ -59,6 +65,26 @@ export interface CodictateModelDatasetResult {
   meanRTF: number;
   peakRSS_MB: null;
   utteranceCount: number;
+  /**
+   * Scored clips the product returned nothing usable for, counted the same way this
+   * run's `results.json` aggregate counts them: a scored sample whose `status` is not
+   * `ok`.
+   *
+   * Not derivable downstream. A timed-out clip is scored as an empty hypothesis and so
+   * still counted in `utteranceCount`, which makes `sampleSize - warmupCount -
+   * utteranceCount` read 0 for a run that timed out 14 times. Emitting the count is the
+   * only way a consumer can disclose it.
+   */
+  failures: number;
+  /**
+   * The same failures split by the `status` that produced them, so a consumer can say
+   * "timed out" rather than the vaguer "failed". Always emitted, including as zeros:
+   * an absent breakdown would not distinguish "nothing failed" from "not recorded".
+   */
+  failuresByStatus: {
+    timeout: number;
+    failed: number;
+  };
   totalAudioSec: number;
   totalWallSec: number;
 }
@@ -184,6 +210,7 @@ function modelResult(
   config: CompatibleRun["config"],
 ): CodictateModelDatasetResult {
   const partial = partialProgress(samples, config);
+  const failed = scoredSamples(samples).filter((sample) => sample.status !== "ok");
   return {
     wer: partial.totalRefWords === 0 ? 0 : partial.totalWer / partial.totalRefWords,
     referenceWords: partial.totalRefWords,
@@ -196,6 +223,11 @@ function modelResult(
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
     peakRSS_MB: null,
     utteranceCount: partial.utterancesDone,
+    failures: failed.length,
+    failuresByStatus: {
+      timeout: failed.filter((sample) => sample.status === "timeout").length,
+      failed: failed.filter((sample) => sample.status === "failed").length,
+    },
     totalAudioSec: partial.totalAudioSec,
     totalWallSec: partial.totalWallSec,
   };
@@ -205,7 +237,7 @@ function partialProgress(
   samples: CompatibleSample[],
   config: CompatibleRun["config"],
 ): PartialProgress {
-  const scored = samples.filter((sample) => !sample.warmup);
+  const scored = scoredSamples(samples);
   const cerSamples = scored.filter((sample) => sample.cer !== undefined);
   return {
     utterancesDone: scored.length,
@@ -226,6 +258,11 @@ function partialProgress(
     totalAudioSec: sum(scored, (sample) => sample.audioDurationSec),
     totalWallSec: sum(scored, (sample) => sampleWallMs(sample, config)) / 1_000,
   };
+}
+
+/** Samples the published numbers are computed over: everything but the warmups. */
+function scoredSamples(samples: CompatibleSample[]): CompatibleSample[] {
+  return samples.filter((sample) => !sample.warmup);
 }
 
 function sampleWallMs(

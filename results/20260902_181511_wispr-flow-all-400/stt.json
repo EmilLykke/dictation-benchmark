@@ -21,6 +21,11 @@
           "meanRTF": 1.4775880532191632,
           "peakRSS_MB": null,
           "utteranceCount": 397,
+          "failures": 0,
+          "failuresByStatus": {
+            "timeout": 0,
+            "failed": 0
+          },
           "totalAudioSec": 2936.5549999999976,
           "totalWallSec": 4339.018585620996
         }
@@ -34,6 +39,11 @@
           "meanRTF": 1.5136468627710509,
           "peakRSS_MB": null,
           "utteranceCount": 397,
+          "failures": 0,
+          "failuresByStatus": {
+            "timeout": 0,
+            "failed": 0
+          },
           "totalAudioSec": 2739.1300625000026,
           "totalWallSec": 4146.075625825001
         }
@@ -51,6 +61,11 @@
           "meanRTF": 1.3426127418772906,
           "peakRSS_MB": null,
           "utteranceCount": 397,
+          "failures": 0,
+          "failuresByStatus": {
+            "timeout": 0,
+            "failed": 0
+          },
           "totalAudioSec": 4932.960000000002,
           "totalWallSec": 6623.054951171002
         }
@@ -66,6 +81,11 @@
           "meanRTF": 1.5160794832198574,
           "peakRSS_MB": null,
           "utteranceCount": 397,
+          "failures": 1,
+          "failuresByStatus": {
+            "timeout": 1,
+            "failed": 0
+          },
           "totalAudioSec": 4415.160000000003,
           "totalWallSec": 6693.73349113299
         }
@@ -81,6 +101,11 @@
           "meanRTF": 1.5767912809356757,
           "peakRSS_MB": null,
           "utteranceCount": 397,
+          "failures": 13,
+          "failuresByStatus": {
+            "timeout": 13,
+            "failed": 0
+          },
           "totalAudioSec": 4812.5999999999985,
           "totalWallSec": 7588.4657186310305
         }
