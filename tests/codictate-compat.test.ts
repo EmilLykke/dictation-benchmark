@@ -17,6 +17,7 @@ function sample(warmup: boolean, overrides: Record<string, unknown> = {}) {
     audioDurationSec: 2,
     wallClockMs: 3_000,
     audioPlaybackMs: 2_000,
+    stopToFirstTextMs: 200,
     stopToStableTextMs: 500,
     wer: { wer: 0, substitutions: 0, insertions: 0, deletions: 0, refWords: 4 },
     ...overrides,
@@ -33,6 +34,7 @@ function runWith(samples: ReturnType<typeof sample>[]): CompatibleRun {
       samples: 5,
       leadMs: 500,
       tailMs: 500,
+      stableMs: 750,
       configurationNote: "Auto-detect",
     },
     results: { "test-clean": { samples } },
@@ -58,7 +60,12 @@ describe("Codictate-compatible artifacts", () => {
     expect(buildCodictateResults(run)).toMatchObject({
       description: "Wispr Flow 1.2.3 external-product benchmark; Auto-detect",
       runDate: "2026-09-02T00:00:00.000Z",
-      config: { sampleSize: 5, warmupCount: 3, normalization: "whisper-basic" },
+      config: {
+        sampleSize: 5,
+        warmupCount: 3,
+        normalization: "whisper-basic",
+        stableMs: 750,
+      },
       librispeech: {
         "test-clean": {
           "external-product": {
@@ -148,29 +155,44 @@ describe("Codictate-compatible artifacts", () => {
     expect(leaf.failuresByStatus).toEqual({ timeout: 0, failed: 0 });
   });
 
-  test("averages the latency of clips that recorded one, and omits it when none did", () => {
+  test("averages each latency over the clips that measured it, not over every clip", () => {
     const run = runWith([
-      // A warmup is excluded, and a timed-out clip records no latency to average.
-      sample(true, { stopToStableTextMs: 9_000 }),
-      sample(false, { stopToStableTextMs: 1_000 }),
-      sample(false, { stopToStableTextMs: 2_000 }),
-      sample(false, { status: "timeout", stopToStableTextMs: null }),
+      // A warmup is excluded whatever it measured.
+      sample(true, { stopToFirstTextMs: 9_000, stopToStableTextMs: 9_000 }),
+      sample(false, { stopToFirstTextMs: 100, stopToStableTextMs: 1_000 }),
+      sample(false, { stopToFirstTextMs: 300, stopToStableTextMs: 2_000 }),
+      // Text arrived and never settled: a first-text time, no stable time. The two
+      // means therefore run over different denominators, which is why each is
+      // filtered separately rather than both over the same clip list.
+      sample(false, { status: "timeout", stopToFirstTextMs: 800, stopToStableTextMs: null }),
     ]);
     run.config.samples = 4;
 
     const leaf =
       buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(leaf.meanStopToFirstTextMs).toBe(400);
     expect(leaf.meanStopToStableTextMs).toBe(1_500);
 
     run.results["test-clean"]!.samples = [
-      sample(false, { status: "timeout", stopToStableTextMs: null }),
+      sample(false, { status: "timeout", stopToFirstTextMs: null, stopToStableTextMs: null }),
     ];
     run.config.samples = 1;
     // Absent rather than 0: nothing was measured, and 0 ms would read as instant.
-    expect(
-      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"]
-        .meanStopToStableTextMs,
-    ).toBeUndefined();
+    const nothing =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(nothing.meanStopToFirstTextMs).toBeUndefined();
+    expect(nothing.meanStopToStableTextMs).toBeUndefined();
+  });
+
+  test("publishes the stability window its stable figure includes", () => {
+    const run = runWith([sample(false)]);
+    run.config.samples = 1;
+    run.config.stableMs = 750;
+
+    // The window is on every stable figure, because the harness stamps the timestamp
+    // when the wait finishes. Published so a consumer can subtract it instead of
+    // knowing it by heart.
+    expect(buildCodictateResults(run).config.stableMs).toBe(750);
   });
 
   test("checkpoints Codictate partial totals and promotes completed dataset", () => {
@@ -238,6 +260,8 @@ describe("committed run records", () => {
     expect(emitted["test-clean"]).toBe(0);
   });
 
+  const DATASETS = ["da_dk", "es_419", "hu_hu", "test-clean", "test-other"];
+
   test("publish the same stop-to-stable-text latency the run's own aggregate recorded", () => {
     const emitted = Object.fromEntries(
       Object.entries(leaves).map(([dataset, leaf]) => [
@@ -251,21 +275,51 @@ describe("committed run records", () => {
       ).map(([dataset, result]) => [dataset, result.aggregate.meanStopToStableTextMs]),
     );
 
-    expect(Object.keys(emitted).sort()).toEqual([
-      "da_dk",
-      "es_419",
-      "hu_hu",
-      "test-clean",
-      "test-other",
-    ]);
+    expect(Object.keys(emitted).sort()).toEqual(DATASETS);
     expect(emitted).toEqual(aggregated);
+  });
 
-    // Named rather than only compared, because this is the figure the site publishes as
-    // the product's response time, and `meanRTF` is not: the harness plays every clip at
-    // 1.0x real time, so `meanRTF` cannot fall below 1.0 whatever the product does.
-    for (const [dataset, latency] of Object.entries(emitted)) {
-      expect([dataset, latency! > 1_000 && latency! < 3_000]).toEqual([dataset, true]);
+  test("publish a first-text latency averaged over the clips that got text", () => {
+    for (const dataset of DATASETS) {
+      const samples = (
+        record.results as Record<
+          string,
+          { samples: { warmup: boolean; stopToFirstTextMs: number | null }[] }
+        >
+      )[dataset].samples;
+      const measured = samples
+        .filter((s) => !s.warmup)
+        .map((s) => s.stopToFirstTextMs)
+        .filter((v): v is number => v !== null);
+      const expected = measured.reduce((a, b) => a + b, 0) / measured.length;
+
       const leaf = leaves[dataset]["external-product"]["wispr-flow"];
+      expect([dataset, leaf.meanStopToFirstTextMs]).toEqual([dataset, expected]);
+      // The denominator is the clips that measured something, never all 397: hu_hu
+      // timed out 13 times with nothing pasted, and averaging those as 0 would make
+      // the slowest dataset read fastest.
+      expect([dataset, measured.length]).toEqual([
+        dataset,
+        dataset === "hu_hu" ? 384 : dataset === "da_dk" ? 396 : 397,
+      ]);
+    }
+  });
+
+  test("publish a stable figure that is the first-text one plus the harness's window", () => {
+    const stableMs = built.config.stableMs;
+    expect(stableMs).toBe(750);
+
+    for (const dataset of DATASETS) {
+      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
+      // The window is the bulk of the gap between the two figures, which is the whole
+      // reason the stable one must not be published as measured: the harness waits
+      // 750 ms before stamping it, so it overstates the product by roughly that much.
+      const corrected = leaf.meanStopToStableTextMs! - stableMs;
+      expect([dataset, corrected - leaf.meanStopToFirstTextMs! < 100]).toEqual([dataset, true]);
+      expect([dataset, corrected > leaf.meanStopToFirstTextMs!]).toEqual([dataset, true]);
+
+      // And meanRTF is not any of these: the harness plays every clip at 1.0x real
+      // time, so it cannot fall below 1.0 whatever the product does.
       expect([dataset, leaf.meanRTF > 1]).toEqual([dataset, true]);
     }
   });

@@ -10,7 +10,8 @@
   "config": {
     "sampleSize": 400,
     "warmupCount": 3,
-    "normalization": "whisper-basic"
+    "normalization": "whisper-basic",
+    "stableMs": 750
   },
   "librispeech": {
     "test-clean": {
@@ -19,6 +20,7 @@
           "wer": 0.04319519218730437,
           "referenceWords": 7987,
           "meanRTF": 1.4775880532191632,
+          "meanStopToFirstTextMs": 596.2163696361129,
           "meanStopToStableTextMs": 1370.1939006296152,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -38,6 +40,7 @@
           "wer": 0.057583892617449665,
           "referenceWords": 7450,
           "meanRTF": 1.5136468627710509,
+          "meanStopToFirstTextMs": 584.558301068073,
           "meanStopToStableTextMs": 1360.5516419302608,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -61,6 +64,7 @@
           "cer": 0.02452521493648146,
           "referenceChars": 62344,
           "meanRTF": 1.3426127418772906,
+          "meanStopToFirstTextMs": 761.1989161229554,
           "meanStopToStableTextMs": 1532.4109531469849,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -82,6 +86,7 @@
           "cer": 0.04123163369907741,
           "referenceChars": 52678,
           "meanRTF": 1.5160794832198574,
+          "meanStopToFirstTextMs": 2119.1415383358194,
           "meanStopToStableTextMs": 2890.9558512345707,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -103,6 +108,7 @@
           "cer": 0.15436793422404932,
           "referenceChars": 53515,
           "meanRTF": 1.5767912809356757,
+          "meanStopToFirstTextMs": 2100.3868244588375,
           "meanStopToStableTextMs": 2869.824480265379,
           "peakRSS_MB": null,
           "utteranceCount": 397,

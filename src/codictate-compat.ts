@@ -15,6 +15,7 @@ export interface CompatibleSample {
   audioDurationSec: number;
   wallClockMs?: number;
   audioPlaybackMs: number;
+  stopToFirstTextMs: number | null;
   stopToStableTextMs: number | null;
   wer: WerResult;
   cer?: CerResult;
@@ -41,6 +42,7 @@ export interface CompatibleRun {
     samples: number;
     leadMs: number;
     tailMs: number;
+    stableMs: number;
     configurationNote: string;
   };
   results: Partial<Record<DatasetId, CompatibleDataset>>;
@@ -64,18 +66,30 @@ export interface CodictateModelDatasetResult {
   referenceChars?: number;
   meanRTF: number;
   /**
-   * Mean milliseconds from the stop hotkey to the moment the pasted text stopped
-   * changing, averaged over the scored clips that recorded one. Carried straight from
-   * this run's `results.json` aggregate, where it is computed the same way.
+   * Mean milliseconds from the stop hotkey to text arriving in the receiver window.
    *
    * This, not `meanRTF`, is the product's response time. The harness plays every clip
    * through a virtual microphone at 1.0x real time, so `totalWallSec` can never fall
    * below `totalAudioSec` and `meanRTF` is floored at 1.0 by the harness itself - about
    * two thirds of it is playback we chose to do, not the product responding.
    *
-   * Optional for the same reason `cer` is: a timed-out clip records no latency at all,
-   * so a dataset that timed out on every clip has nothing to average. Absent then,
-   * rather than 0, which would read as instant.
+   * Averaged over the scored clips that recorded one, which is not every scored clip:
+   * a clip that timed out with nothing pasted records `null`, and a null averaged as 0
+   * would read as instant. Optional for the same reason `cer` is - a dataset that got
+   * nothing back at all has nothing to average, and is absent here rather than 0.
+   */
+  meanStopToFirstTextMs?: number;
+  /**
+   * Mean milliseconds from the stop hotkey to the moment the pasted text stopped
+   * changing. Same denominator rule as `meanStopToFirstTextMs`, and it can differ:
+   * text that arrived but never settled records a first-text time and no stable time.
+   *
+   * NOT the product's own settling time. The harness declares text stable only once it
+   * has been unchanged for `config.stableMs`, and stamps the timestamp when that wait
+   * finishes, so every value here carries that window on top of the real one. Subtract
+   * `config.stableMs` before publishing it. It is emitted raw, with the window emitted
+   * beside it, so the correction happens where a reader can see it rather than inside
+   * this transform.
    */
   meanStopToStableTextMs?: number;
   peakRSS_MB: null;
@@ -124,6 +138,13 @@ export interface CodictateCompatibleResults {
     sampleSize: number;
     warmupCount: 3;
     normalization: "whisper-basic";
+    /**
+     * How long the harness required the pasted text to hold still before calling it
+     * stable. Published because `meanStopToStableTextMs` includes it: without the
+     * window beside the measurement, a consumer would have to know the number by
+     * heart to read the measurement correctly.
+     */
+    stableMs: number;
   };
   librispeech: DatasetResults;
   fleurs: DatasetResults;
@@ -170,6 +191,7 @@ export function buildCodictateResults(run: CompatibleRun): CodictateCompatibleRe
       sampleSize: run.config.samples,
       warmupCount: 3,
       normalization: "whisper-basic",
+      stableMs: run.config.stableMs,
     },
     librispeech,
     fleurs,
@@ -227,9 +249,6 @@ function modelResult(
   const partial = partialProgress(samples, config);
   const scored = scoredSamples(samples);
   const failed = scored.filter((sample) => sample.status !== "ok");
-  const latencies = scored
-    .map((sample) => sample.stopToStableTextMs)
-    .filter((value): value is number => value !== null);
   return {
     wer: partial.totalRefWords === 0 ? 0 : partial.totalWer / partial.totalRefWords,
     referenceWords: partial.totalRefWords,
@@ -240,9 +259,8 @@ function modelResult(
         }
       : {}),
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
-    ...(latencies.length > 0
-      ? { meanStopToStableTextMs: sum(latencies, (value) => value) / latencies.length }
-      : {}),
+    ...meanLatency("meanStopToFirstTextMs", scored, (sample) => sample.stopToFirstTextMs),
+    ...meanLatency("meanStopToStableTextMs", scored, (sample) => sample.stopToStableTextMs),
     peakRSS_MB: null,
     utteranceCount: partial.utterancesDone,
     failures: failed.length,
@@ -253,6 +271,26 @@ function modelResult(
     totalAudioSec: partial.totalAudioSec,
     totalWallSec: partial.totalWallSec,
   };
+}
+
+/**
+ * One latency mean, under the given name, over the clips that recorded one.
+ *
+ * A clip the product returned nothing for records `null`, and the denominator is the
+ * clips that measured something rather than every scored clip: counting a null as 0
+ * would pull the mean towards "instant" in exactly the runs where the product was
+ * slowest. Yields `{}` when nothing measured, so the key is absent rather than 0.
+ */
+function meanLatency<K extends string>(
+  key: K,
+  scored: CompatibleSample[],
+  select: (sample: CompatibleSample) => number | null,
+): Partial<Record<K, number>> {
+  const measured = scored
+    .map(select)
+    .filter((value): value is number => value !== null);
+  if (measured.length === 0) return {};
+  return { [key]: sum(measured, (value) => value) / measured.length } as Record<K, number>;
 }
 
 function partialProgress(
