@@ -91,30 +91,34 @@ bun run benchmark -- \
 
 ## Per-clip timeout
 
-Each clip's timeout is audio-relative:
+A clip's timeout is a flat deadline that starts when dictation stops:
 
 ```
-effective timeout = audioDurationSec * 1000 + timeoutBudgetMs
+give up if no stable text within timeoutMs of the hotkey that ends the clip
 ```
 
-The budget defaults to `30000` ms and is set with `--timeout-budget-ms <n>`:
+The bridge stamps `stoppedAt` only after playback and the tail have finished
+(`native/Sources/FlowBridge/main.swift`), so the timeout never overlaps
+playback: a 5s clip and a 36s clip each get the whole budget to produce text.
+Clip duration must not be added to it — that would count the audio twice.
+
+It defaults to `45000` ms and is set with `--timeout-ms <n>`:
 
 ```bash
 bun run benchmark -- \
   --name wispr-flow-all-20 \
   --samples 20 \
-  --timeout-budget-ms 45000
+  --timeout-ms 45000
 ```
 
-A flat timeout gives short clips far more headroom than long ones — under the
-old flat 45s budget a 5s clip had 40s of slack while a 36s clip had 9s — so the
-timeout rate rose with clip length instead of tracking product behaviour. The
-budget is the slack granted on top of playback, so every clip is judged equally.
+The value used by a run is recorded in `results.json` under `config.timeoutMs`,
+so results are self-describing. All published runs here used 45000 ms.
 
-The value used by a run is recorded in `results.json` under
-`config.timeoutBudgetMs`, so results are self-describing. Runs recorded before
-this change instead carry the flat `config.timeoutMs`; they still parse, and
-resuming one backfills the default budget.
+One intermediate revision recorded `config.timeoutBudgetMs` instead, from a
+short-lived attempt to make the timeout audio-relative. Such a record still
+parses; resuming it reads the budget as the flat post-playback timeout, since
+that is what the budget already was, and prints a line saying so. A record
+carrying both fields keeps its explicit `config.timeoutMs`.
 
 Runner writes two atomic progress files after every finished clip:
 

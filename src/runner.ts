@@ -8,7 +8,13 @@ import {
 } from "./adapters/wispr-flow";
 import { buildManifest } from "./manifest";
 import { computeCer, computeWer, type CerResult, type WerResult } from "./scoring";
-import { DATASET_IDS, type DatasetId, type ManifestEntry, type ProductMetadata } from "./types";
+import {
+  DATASET_IDS,
+  type DatasetId,
+  type ManifestEntry,
+  type ProductMetadata,
+  type TranscriptionRequest,
+} from "./types";
 import { buildCodictateCheckpoint, buildCodictateResults } from "./codictate-compat";
 import {
   CODICTATE_PATH_PLACEHOLDER,
@@ -17,9 +23,9 @@ import {
 } from "./portable-paths";
 
 const WARMUP_COUNT = 3;
-const DEFAULT_TIMEOUT_BUDGET_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 45_000;
 
-interface RunConfig {
+export interface RunConfig {
   /**
    * Absolute path to the Codictate checkout in memory; serialised as
    * `<codictate>` so a committed run does not name the machine that made it.
@@ -32,17 +38,21 @@ interface RunConfig {
   leadMs: number;
   tailMs: number;
   /**
-   * Headroom granted on top of the clip's own duration. The effective per-clip
-   * timeout is `audioDurationSec * 1000 + timeoutBudgetMs`, so a 5s clip and a
-   * 36s clip get the same amount of slack instead of the same total budget.
+   * Per-clip deadline in milliseconds, counted from the moment dictation is
+   * stopped. `main.swift` stamps `stoppedAt` after playback and the tail have
+   * already elapsed, so this is grace granted *after* the clip finished
+   * playing: it is flat by construction and every clip gets all of it,
+   * whatever its length.
    */
-  timeoutBudgetMs: number;
+  timeoutMs: number;
   /**
-   * Legacy flat per-clip timeout recorded by runs made before the budget was
-   * audio-relative. Never written for new runs; kept so old `results.json`
-   * files still parse and can be resumed.
+   * Legacy field, written only by runs made while the timeout was briefly
+   * computed as `audioDurationSec * 1000 + timeoutBudgetMs`. That formula
+   * double-counted the clip, because the bridge already applies the value
+   * after playback. Never written for new runs; kept so those `results.json`
+   * files still parse, and read on resume when `timeoutMs` is absent.
    */
-  timeoutMs?: number;
+  timeoutBudgetMs?: number;
   stableMs: number;
   configurationNote: string;
 }
@@ -120,7 +130,7 @@ async function main(): Promise<void> {
     runDir = resolve(options.resume);
     run = JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")) as BenchmarkRun;
     if (run.status === "completed") throw new Error(`Run already completed: ${runDir}`);
-    run.config = withCodictatePath(withTimeoutBudget(run.config), options.config.codictatePath);
+    run.config = withCodictatePath(withTimeoutMs(run.config), options.config.codictatePath);
   } else {
     if (!options.name) throw new Error("--name is required for a new run");
     const runId = `${timestamp()}_${slug(options.name)}`;
@@ -195,15 +205,7 @@ async function main(): Promise<void> {
         const warmup = index < WARMUP_COUNT;
         process.stdout.write(`  ${index + 1}/${entries.length} ${entry.id}${warmup ? " (warmup)" : ""} ... `);
         const startedAt = performance.now();
-        const transcription = await adapter.transcribe({
-          audioPath: entry.audioPath,
-          deviceName: run.config.deviceName,
-          hotkey: run.config.hotkey,
-          leadMs: run.config.leadMs,
-          tailMs: run.config.tailMs,
-          timeoutMs: effectiveTimeoutMs(run.config, entry.audioDurationSec),
-          stableMs: run.config.stableMs,
-        });
+        const transcription = await adapter.transcribe(transcribeRequest(run.config, entry));
         const wallClockMs = performance.now() - startedAt;
         const scoredHypothesis = transcription.status === "ok" ? transcription.transcript : "";
         const wer = computeWer(entry.transcript, scoredHypothesis);
@@ -249,17 +251,46 @@ async function main(): Promise<void> {
 }
 
 /**
- * Per-clip timeout, relative to how long the clip actually is. A flat budget
- * penalises datasets with long clips, which skews the timeout rate.
+ * Builds the one bridge call a clip needs.
+ *
+ * `timeoutMs` is passed through flat, and deliberately ignores
+ * `entry.audioDurationSec`. In `native/Sources/FlowBridge/main.swift` the
+ * deadline is `stoppedAt.addingTimeInterval(timeoutMs)`, and `stoppedAt` is
+ * stamped *after* playback and the tail have finished — so the value already
+ * means "grace after dictation stops", and adding the clip duration to it
+ * counts the audio twice. That mistake shipped once (77d49fc) and gave a 30s
+ * clip twice the post-playback grace of a 2s clip; do not reintroduce it.
  */
-function effectiveTimeoutMs(config: RunConfig, audioDurationSec: number): number {
-  return Math.round(audioDurationSec * 1_000 + config.timeoutBudgetMs);
+export function transcribeRequest(config: RunConfig, entry: ManifestEntry): TranscriptionRequest {
+  return {
+    audioPath: entry.audioPath,
+    deviceName: config.deviceName,
+    hotkey: config.hotkey,
+    leadMs: config.leadMs,
+    tailMs: config.tailMs,
+    timeoutMs: config.timeoutMs,
+    stableMs: config.stableMs,
+  };
 }
 
-/** Backfills the budget for runs recorded before `--timeout-budget-ms` existed. */
-function withTimeoutBudget(config: RunConfig): RunConfig {
-  if (typeof config.timeoutBudgetMs === "number") return config;
-  return { ...config, timeoutBudgetMs: DEFAULT_TIMEOUT_BUDGET_MS };
+/**
+ * Reads a flat `timeoutMs` out of any run record ever written here.
+ *
+ * Runs made while the timeout was audio-relative recorded `timeoutBudgetMs`
+ * instead. That budget was always the slack granted after playback — the
+ * bridge applies it from `stoppedAt` — so it carries over unchanged as the
+ * flat timeout; only the extra clip duration, which was double-counting, is
+ * dropped. A record holding both keeps its explicit `timeoutMs`.
+ */
+export function withTimeoutMs(config: RunConfig): RunConfig {
+  if (typeof config.timeoutMs === "number") return config;
+  if (typeof config.timeoutBudgetMs === "number") {
+    console.log(
+      `Resumed run recorded timeoutBudgetMs=${config.timeoutBudgetMs}; using it as the flat post-playback timeout.`,
+    );
+    return { ...config, timeoutMs: config.timeoutBudgetMs };
+  }
+  return { ...config, timeoutMs: DEFAULT_TIMEOUT_MS };
 }
 
 /**
@@ -372,7 +403,7 @@ function printPlan(
   console.log(`Clips:     ${entries.length} (${WARMUP_COUNT} warmups per dataset)`);
   console.log(`Audio:     ${(audioSeconds / 60).toFixed(1)} minutes at 1.0×`);
   console.log(`Input:     ${run.config.deviceName}`);
-  console.log(`Timeout:   clip duration + ${run.config.timeoutBudgetMs}ms budget`);
+  console.log(`Timeout:   ${run.config.timeoutMs}ms after dictation stops (flat; same for every clip)`);
   console.log(`Output:    ${runDir}`);
 }
 
@@ -385,7 +416,7 @@ function parseArgs(args: string[]): CliOptions {
     hotkey: { keyCode: 49, modifiers: ["option"] },
     leadMs: 500,
     tailMs: 500,
-    timeoutBudgetMs: DEFAULT_TIMEOUT_BUDGET_MS,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
     stableMs: 750,
     configurationNote: "",
   };
@@ -405,7 +436,7 @@ function parseArgs(args: string[]): CliOptions {
       case "--codictate": config.codictatePath = resolve(value()); break;
       case "--datasets": config.datasets = parseDatasets(value()); break;
       case "--samples": config.samples = positiveInteger(value(), flag); break;
-      case "--timeout-budget-ms": config.timeoutBudgetMs = positiveInteger(value(), flag); break;
+      case "--timeout-ms": config.timeoutMs = positiveInteger(value(), flag); break;
       case "--device": config.deviceName = value(); break;
       case "--configuration-note": config.configurationNote = value(); break;
       default: throw new Error(`Unknown flag: ${flag}`);
@@ -447,7 +478,9 @@ function formatMs(value: number | null): string {
   return value === null ? "n/a" : `${Math.round(value)}ms`;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
