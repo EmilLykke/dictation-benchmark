@@ -92,6 +92,52 @@ export interface CodictateModelDatasetResult {
    * this transform.
    */
   meanStopToStableTextMs?: number;
+  /**
+   * Milliseconds of waiting this product cost per second of audio dictated:
+   * `totalStopToFirstTextMs / respondedAudioSec`.
+   *
+   * Deliberately NOT called `meanRTF`, and `meanRTF` must never be set to it. Codictate's
+   * `meanRTF` is `totalWallSec / totalAudioSec` around its own inference call and nothing
+   * else, so its unit is seconds of work per second of audio; this is the same unit in
+   * milliseconds, over the only stretch of this product's work the harness can see.
+   * `meanRTF` on this leaf stays what the harness actually clocked, which is dominated by
+   * the 1.0x playback the harness chose to do, and is not comparable to anything.
+   *
+   * A ratio rather than the flat `meanStopToFirstTextMs` because the wait scales with
+   * clip length: per-sample `stopToFirstTextMs` regressed on `audioDurationSec` gives
+   * r = 0.59 to 0.90 with slopes of 38 to 77 ms per audio second, so most of it is work
+   * proportional to the audio and not a fixed round trip.
+   *
+   * Read it as "how long do I wait per second of audio I dictated", which is the same
+   * question Codictate's figure answers, and not as this product's total compute: Flow
+   * streams audio while the user is still speaking, so part of its transcription overlaps
+   * with speech and never appears in this measurement.
+   *
+   * Absent under the same rule as `meanStopToFirstTextMs`, and for the same reason: a
+   * dataset that got nothing back has no numerator, and 0 would read as instant.
+   */
+  responseMsPerAudioSec?: number;
+  /**
+   * The numerator of `responseMsPerAudioSec`: summed `stopToFirstTextMs` over the scored
+   * clips that recorded one. Emitted because it is not recoverable from
+   * `meanStopToFirstTextMs` without the clip count that mean was taken over, and that
+   * count is not `utteranceCount` - hu_hu timed out 13 times with nothing pasted.
+   */
+  totalStopToFirstTextMs?: number;
+  /**
+   * The denominator of `responseMsPerAudioSec`: summed `audioDurationSec` over those same
+   * clips, and deliberately not `totalAudioSec`.
+   *
+   * A timed-out clip has no latency to put in the numerator, so its audio must leave the
+   * denominator too. Counting it on the bottom only would be identical to counting its
+   * latency as 0, which makes the slowest datasets read fastest: hu_hu is 176 ms/s over
+   * the clips that answered and 168 over all of them.
+   *
+   * Published so a consumer can pool datasets audio-weighted as
+   * `sum(totalStopToFirstTextMs) / sum(respondedAudioSec)`, matching how Codictate pools
+   * `totalWallSec / totalAudioSec`. Averaging the per-dataset ratios unweighted is wrong.
+   */
+  respondedAudioSec?: number;
   peakRSS_MB: null;
   utteranceCount: number;
   /**
@@ -261,6 +307,7 @@ function modelResult(
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
     ...meanLatency("meanStopToFirstTextMs", scored, (sample) => sample.stopToFirstTextMs),
     ...meanLatency("meanStopToStableTextMs", scored, (sample) => sample.stopToStableTextMs),
+    ...responseRate(scored),
     peakRSS_MB: null,
     utteranceCount: partial.utterancesDone,
     failures: failed.length,
@@ -291,6 +338,36 @@ function meanLatency<K extends string>(
     .filter((value): value is number => value !== null);
   if (measured.length === 0) return {};
   return { [key]: sum(measured, (value) => value) / measured.length } as Record<K, number>;
+}
+
+/**
+ * The response-time ratio and the two sums it came from, over the scored clips that got
+ * text back.
+ *
+ * One filter drives both sides on purpose. A clip with no `stopToFirstTextMs` contributes
+ * neither its (absent) latency nor its audio, because leaving its audio in the denominator
+ * is arithmetically the same as claiming the product answered it instantly.
+ *
+ * Yields `{}` when no clip answered, so all three keys are absent together rather than
+ * publishing a 0 ms/s that would read as instant, and rather than a 0/0 NaN.
+ */
+function responseRate(
+  scored: CompatibleSample[],
+): Partial<
+  Pick<
+    CodictateModelDatasetResult,
+    "responseMsPerAudioSec" | "totalStopToFirstTextMs" | "respondedAudioSec"
+  >
+> {
+  const responded = scored.filter((sample) => sample.stopToFirstTextMs !== null);
+  const totalStopToFirstTextMs = sum(responded, (sample) => sample.stopToFirstTextMs!);
+  const respondedAudioSec = sum(responded, (sample) => sample.audioDurationSec);
+  if (responded.length === 0 || respondedAudioSec === 0) return {};
+  return {
+    responseMsPerAudioSec: totalStopToFirstTextMs / respondedAudioSec,
+    totalStopToFirstTextMs,
+    respondedAudioSec,
+  };
 }
 
 function partialProgress(

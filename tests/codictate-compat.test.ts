@@ -184,6 +184,54 @@ describe("Codictate-compatible artifacts", () => {
     expect(nothing.meanStopToStableTextMs).toBeUndefined();
   });
 
+  test("divides response time by only the audio that got an answer", () => {
+    const run = runWith([
+      // A warmup is excluded whatever it measured.
+      sample(true, { audioDurationSec: 100, stopToFirstTextMs: 100 }),
+      sample(false, { audioDurationSec: 2, stopToFirstTextMs: 200 }),
+      sample(false, { audioDurationSec: 4, stopToFirstTextMs: 400 }),
+      // Timed out with nothing pasted. Its 94 seconds must leave the denominator as
+      // well as the numerator: keeping the audio while dropping the latency is the
+      // same arithmetic as claiming the product answered it in 0 ms, which drags the
+      // ratio down in exactly the datasets where the product did worst.
+      sample(false, { audioDurationSec: 94, status: "timeout", stopToFirstTextMs: null }),
+    ]);
+    run.config.samples = 4;
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(leaf.totalStopToFirstTextMs).toBe(600);
+    expect(leaf.respondedAudioSec).toBe(6);
+    expect(leaf.responseMsPerAudioSec).toBe(100);
+    // What the wrong denominator would have said, named so the difference is visible.
+    expect(leaf.totalAudioSec).toBe(100);
+    expect(leaf.totalStopToFirstTextMs! / leaf.totalAudioSec).toBe(6);
+
+    run.results["test-clean"]!.samples = [
+      sample(false, { status: "timeout", stopToFirstTextMs: null, stopToStableTextMs: null }),
+    ];
+    run.config.samples = 1;
+    // Absent together rather than 0 ms/s, which would read as instant, or 0/0 NaN.
+    const nothing =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(nothing.responseMsPerAudioSec).toBeUndefined();
+    expect(nothing.totalStopToFirstTextMs).toBeUndefined();
+    expect(nothing.respondedAudioSec).toBeUndefined();
+  });
+
+  test("keeps meanRTF off the comparable response figure", () => {
+    const run = runWith([sample(false, { audioDurationSec: 2, wallClockMs: 3_000 })]);
+    run.config.samples = 1;
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    // meanRTF stays what the harness clocked, playback included. The two must not
+    // converge: the comparable figure is in ms per audio second, meanRTF is floored at
+    // 1.0 by playback the harness chose to do.
+    expect(leaf.meanRTF).toBe(1.5);
+    expect(leaf.responseMsPerAudioSec).toBe(100);
+  });
+
   test("publishes the stability window its stable figure includes", () => {
     const run = runWith([sample(false)]);
     run.config.samples = 1;
@@ -322,6 +370,92 @@ describe("committed run records", () => {
       // time, so it cannot fall below 1.0 whatever the product does.
       expect([dataset, leaf.meanRTF > 1]).toEqual([dataset, true]);
     }
+  });
+
+  const RESPONSE_MS_PER_AUDIO_SEC: Record<string, number> = {
+    "test-clean": 81,
+    "test-other": 85,
+    es_419: 61,
+    da_dk: 190,
+    hu_hu: 176,
+  };
+
+  test("publish the response time per audio second the run's own samples give", () => {
+    for (const dataset of DATASETS) {
+      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
+      expect([dataset, Math.round(leaf.responseMsPerAudioSec!)]).toEqual([
+        dataset,
+        RESPONSE_MS_PER_AUDIO_SEC[dataset],
+      ]);
+      // The published ratio is exactly its two published sums, so a consumer can pool
+      // datasets without re-deriving anything from results.json.
+      expect([dataset, leaf.totalStopToFirstTextMs! / leaf.respondedAudioSec!]).toEqual([
+        dataset,
+        leaf.responseMsPerAudioSec!,
+      ]);
+    }
+  });
+
+  test("drop a timed-out clip from both sides of the response ratio", () => {
+    for (const dataset of DATASETS) {
+      const samples = (
+        record.results as Record<
+          string,
+          {
+            samples: {
+              warmup: boolean;
+              status: string;
+              audioDurationSec: number;
+              stopToFirstTextMs: number | null;
+            }[];
+          }
+        >
+      )[dataset].samples;
+      const scored = samples.filter((s) => !s.warmup);
+      const answered = scored.filter((s) => s.stopToFirstTextMs !== null);
+      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
+
+      expect([dataset, leaf.totalStopToFirstTextMs]).toEqual([
+        dataset,
+        answered.reduce((a, s) => a + s.stopToFirstTextMs!, 0),
+      ]);
+      // The denominator is the answered clips' audio, never totalAudioSec: da_dk and
+      // hu_hu each lose the timed-out clips' seconds off the bottom too.
+      expect([dataset, leaf.respondedAudioSec]).toEqual([
+        dataset,
+        answered.reduce((a, s) => a + s.audioDurationSec, 0),
+      ]);
+      const dropped = scored.length - answered.length;
+      expect([dataset, dropped]).toEqual([
+        dataset,
+        dataset === "hu_hu" ? 13 : dataset === "da_dk" ? 1 : 0,
+      ]);
+      expect([dataset, leaf.respondedAudioSec! < leaf.totalAudioSec]).toEqual([
+        dataset,
+        dropped > 0,
+      ]);
+    }
+
+    // Counting the 13 timed-out hu_hu clips as 0 ms instead would have published 168
+    // and made the slowest dataset read faster than da_dk. Named so the shortcut
+    // cannot come back unnoticed.
+    const huHu = leaves["hu_hu"]["external-product"]["wispr-flow"];
+    expect(Math.round(huHu.totalStopToFirstTextMs! / huHu.totalAudioSec)).toBe(168);
+    expect(Math.round(huHu.responseMsPerAudioSec!)).toBe(176);
+  });
+
+  test("pool audio-weighted to the figure a consumer publishes", () => {
+    const all = DATASETS.map((d) => leaves[d]["external-product"]["wispr-flow"]);
+    const pooled =
+      all.reduce((a, leaf) => a + leaf.totalStopToFirstTextMs!, 0) /
+      all.reduce((a, leaf) => a + leaf.respondedAudioSec!, 0);
+    expect(Math.round(pooled)).toBe(123);
+
+    // Not the unweighted mean of the five ratios, which is what publishing only the
+    // ratio per dataset would have invited.
+    const unweighted =
+      all.reduce((a, leaf) => a + leaf.responseMsPerAudioSec!, 0) / all.length;
+    expect(Math.round(unweighted)).toBe(119);
   });
 
   test("publish a breakdown that adds back up to the failure count", () => {
