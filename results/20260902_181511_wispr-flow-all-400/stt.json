@@ -17,6 +17,7 @@
       "external-product": {
         "wispr-flow": {
           "wer": 0.04319519218730437,
+          "referenceWords": 7987,
           "meanRTF": 1.4775880532191632,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -29,6 +30,7 @@
       "external-product": {
         "wispr-flow": {
           "wer": 0.057583892617449665,
+          "referenceWords": 7450,
           "meanRTF": 1.5136468627710509,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -43,7 +45,9 @@
       "external-product": {
         "wispr-flow": {
           "wer": 0.034433009521977496,
+          "referenceWords": 10397,
           "cer": 0.02452521493648146,
+          "referenceChars": 62344,
           "meanRTF": 1.3426127418772906,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -56,7 +60,9 @@
       "external-product": {
         "wispr-flow": {
           "wer": 0.05967127203430205,
+          "referenceWords": 8396,
           "cer": 0.04123163369907741,
+          "referenceChars": 52678,
           "meanRTF": 1.5160794832198574,
           "peakRSS_MB": null,
           "utteranceCount": 397,
@@ -69,7 +75,9 @@
       "external-product": {
         "wispr-flow": {
           "wer": 0.22934164183148198,
+          "referenceWords": 7382,
           "cer": 0.15436793422404932,
+          "referenceChars": 53515,
           "meanRTF": 1.5767912809356757,
           "peakRSS_MB": null,
           "utteranceCount": 397,

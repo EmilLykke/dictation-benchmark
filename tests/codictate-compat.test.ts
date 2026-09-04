@@ -58,6 +58,7 @@ describe("Codictate-compatible artifacts", () => {
           "external-product": {
             "wispr-flow": {
               wer: 0.375,
+              referenceWords: 8,
               meanRTF: 1.4,
               peakRSS_MB: null,
               utteranceCount: 2,
@@ -72,6 +73,41 @@ describe("Codictate-compatible artifacts", () => {
 
     run.completedAt = "2026-09-02T01:00:00.000Z";
     expect(buildCodictateResults(run).runDate).toBe(run.completedAt);
+  });
+
+  test("publishes the denominators the rates were divided by", () => {
+    const run = runWith([
+      sample(false, {
+        wer: { wer: 0.25, substitutions: 1, insertions: 0, deletions: 0, refWords: 4 },
+        cer: { cer: 0.1, substitutions: 2, insertions: 0, deletions: 0, refChars: 20 },
+      }),
+      sample(false, {
+        wer: { wer: 0.5, substitutions: 0, insertions: 1, deletions: 1, refWords: 4 },
+        cer: { cer: 0.2, substitutions: 1, insertions: 1, deletions: 2, refChars: 20 },
+      }),
+    ]);
+    run.config.samples = 2;
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+
+    // The point of publishing the denominator: the rate times the count is the error
+    // count, so any set of leaves can be re-pooled without re-running anything.
+    expect(leaf.referenceWords).toBe(8);
+    expect(leaf.wer * leaf.referenceWords).toBeCloseTo(3, 10);
+    expect(leaf.referenceChars).toBe(40);
+    expect(leaf.cer! * leaf.referenceChars!).toBeCloseTo(6, 10);
+  });
+
+  test("omits referenceChars where there is no cer to divide", () => {
+    const run = runWith([sample(false)]);
+    run.config.samples = 1;
+
+    const leaf =
+      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
+    expect(leaf.cer).toBeUndefined();
+    expect(leaf.referenceChars).toBeUndefined();
+    expect(leaf.referenceWords).toBe(4);
   });
 
   test("checkpoints Codictate partial totals and promotes completed dataset", () => {

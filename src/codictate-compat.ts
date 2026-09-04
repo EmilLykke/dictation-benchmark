@@ -42,7 +42,20 @@ export interface CompatibleRun {
 
 export interface CodictateModelDatasetResult {
   wer: number;
+  /**
+   * Reference words the WER was divided by. Codictate's own leaf carries the same
+   * field under the same name, and both exist for the same reason: accuracy across
+   * datasets has to be pooled as sum(errors) / sum(referenceWords), and a leaf that
+   * publishes only a rate cannot be pooled with anything.
+   *
+   * Required here, unlike on Codictate's read type - this run's `results.json`
+   * aggregate has always recorded the count, so there is no case where an
+   * external-product leaf can be built without one.
+   */
+  referenceWords: number;
   cer?: number;
+  /** Reference characters the CER was divided by. Absent wherever `cer` is absent. */
+  referenceChars?: number;
   meanRTF: number;
   peakRSS_MB: null;
   utteranceCount: number;
@@ -173,8 +186,12 @@ function modelResult(
   const partial = partialProgress(samples, config);
   return {
     wer: partial.totalRefWords === 0 ? 0 : partial.totalWer / partial.totalRefWords,
+    referenceWords: partial.totalRefWords,
     ...(partial.totalCer !== undefined && partial.totalRefChars
-      ? { cer: partial.totalCer / partial.totalRefChars }
+      ? {
+          cer: partial.totalCer / partial.totalRefChars,
+          referenceChars: partial.totalRefChars,
+        }
       : {}),
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
     peakRSS_MB: null,
