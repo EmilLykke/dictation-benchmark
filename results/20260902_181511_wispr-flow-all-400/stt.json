@@ -1,0 +1,82 @@
+{
+  "description": "Wispr Flow 1.6.765 external-product benchmark; English datasets captured with English enabled; FLEURS datasets require corresponding languages enabled before resume; Context Awareness off; clean dictionary",
+  "hardware": {
+    "chip": "Apple M4 Max",
+    "ram": "36 GB",
+    "os": "macOS",
+    "osVersion": "26.6.2"
+  },
+  "runDate": "2026-09-04T00:21:33.969Z",
+  "config": {
+    "sampleSize": 400,
+    "warmupCount": 3,
+    "normalization": "whisper-basic"
+  },
+  "librispeech": {
+    "test-clean": {
+      "external-product": {
+        "wispr-flow": {
+          "wer": 0.04319519218730437,
+          "meanRTF": 1.4775880532191632,
+          "peakRSS_MB": null,
+          "utteranceCount": 397,
+          "totalAudioSec": 2936.5549999999976,
+          "totalWallSec": 4339.018585620996
+        }
+      }
+    },
+    "test-other": {
+      "external-product": {
+        "wispr-flow": {
+          "wer": 0.057583892617449665,
+          "meanRTF": 1.5136468627710509,
+          "peakRSS_MB": null,
+          "utteranceCount": 397,
+          "totalAudioSec": 2739.1300625000026,
+          "totalWallSec": 4146.075625825001
+        }
+      }
+    }
+  },
+  "fleurs": {
+    "es_419": {
+      "external-product": {
+        "wispr-flow": {
+          "wer": 0.034433009521977496,
+          "cer": 0.02452521493648146,
+          "meanRTF": 1.3426127418772906,
+          "peakRSS_MB": null,
+          "utteranceCount": 397,
+          "totalAudioSec": 4932.960000000002,
+          "totalWallSec": 6623.054951171002
+        }
+      }
+    },
+    "da_dk": {
+      "external-product": {
+        "wispr-flow": {
+          "wer": 0.05967127203430205,
+          "cer": 0.04123163369907741,
+          "meanRTF": 1.5160794832198574,
+          "peakRSS_MB": null,
+          "utteranceCount": 397,
+          "totalAudioSec": 4415.160000000003,
+          "totalWallSec": 6693.73349113299
+        }
+      }
+    },
+    "hu_hu": {
+      "external-product": {
+        "wispr-flow": {
+          "wer": 0.22934164183148198,
+          "cer": 0.15436793422404932,
+          "meanRTF": 1.5767912809356757,
+          "peakRSS_MB": null,
+          "utteranceCount": 397,
+          "totalAudioSec": 4812.5999999999985,
+          "totalWallSec": 7588.4657186310305
+        }
+      }
+    }
+  }
+}

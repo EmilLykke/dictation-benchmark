@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "status": "running",
+  "runId": "20260902_175742_final-option-safe-proof",
+  "createdAt": "2026-09-02T17:57:42.969Z",
+  "updatedAt": "2026-09-02T17:57:43.968Z",
+  "product": {
+    "id": "wispr-flow",
+    "label": "Wispr Flow",
+    "version": "1.6.765"
+  },
+  "hardware": {
+    "platform": "darwin",
+    "release": "25.6.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max"
+  },
+  "config": {
+    "codictatePath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate",
+    "datasets": [
+      "test-clean"
+    ],
+    "samples": 4,
+    "deviceName": "BlackHole 2ch",
+    "hotkey": {
+      "keyCode": 49,
+      "modifiers": [
+        "option"
+      ]
+    },
+    "leadMs": 500,
+    "tailMs": 500,
+    "timeoutMs": 45000,
+    "stableMs": 750,
+    "configurationNote": "Wispr Flow 1.6.765; Hands-free Option+Space; BlackHole 2ch; English; Context Awareness off; flag-only hotkey generator"
+  },
+  "results": {}
+}

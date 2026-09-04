@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "status": "running",
+  "runId": "20260902_180925_overnight-readiness-proof",
+  "createdAt": "2026-09-02T18:09:25.089Z",
+  "updatedAt": "2026-09-02T18:10:16.141Z",
+  "product": {
+    "id": "wispr-flow",
+    "label": "Wispr Flow",
+    "version": "1.6.765"
+  },
+  "hardware": {
+    "platform": "darwin",
+    "release": "25.6.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "ram": "36 GB",
+    "os": "macOS",
+    "osVersion": "26.6.2"
+  },
+  "config": {
+    "codictatePath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate",
+    "datasets": [
+      "test-clean"
+    ],
+    "samples": 4,
+    "deviceName": "BlackHole 2ch",
+    "hotkey": {
+      "keyCode": 49,
+      "modifiers": [
+        "option"
+      ]
+    },
+    "leadMs": 500,
+    "tailMs": 500,
+    "timeoutMs": 45000,
+    "stableMs": 750,
+    "configurationNote": "Flow 1.6.765; English; Context Awareness off; compatibility proof"
+  },
+  "results": {
+    "test-clean": {
+      "samples": [
+        {
+          "id": "4970-29095-0017",
+          "warmup": true,
+          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/4970-29095-0017.wav",
+          "audioDurationSec": 3.93,
+          "language": "en",
+          "reference": "THE SIGHT SEERS RETURNED IN HIGH SPIRITS FROM THE CITY",
+          "hypothesis": "",
+          "status": "timeout",
+          "wer": {
+            "substitutions": 0,
+            "insertions": 0,
+            "deletions": 10,
+            "wer": 1,
+            "refWords": 10
+          },
+          "audioPlaybackMs": 4209.6699476242065,
+          "wallClockMs": 50685.990959,
+          "stopToFirstTextMs": null,
+          "stopToStableTextMs": null,
+          "diagnostic": "Flow did not paste text before timeout"
+        }
+      ],
+      "aggregate": {
+        "wer": 0,
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 0,
+        "referenceWords": 0,
+        "scoredSamples": 0,
+        "failures": 0,
+        "meanStopToStableTextMs": null
+      }
+    }
+  }
+}

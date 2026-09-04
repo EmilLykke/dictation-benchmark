@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "status": "completed",
+  "runId": "20260902_174410_wispr-flow-proof",
+  "createdAt": "2026-09-02T17:44:10.354Z",
+  "updatedAt": "2026-09-02T17:44:48.147Z",
+  "product": {
+    "id": "wispr-flow",
+    "label": "Wispr Flow",
+    "version": "1.6.765"
+  },
+  "hardware": {
+    "platform": "darwin",
+    "release": "25.6.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max"
+  },
+  "config": {
+    "codictatePath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate",
+    "datasets": [
+      "test-clean"
+    ],
+    "samples": 4,
+    "deviceName": "BlackHole 2ch",
+    "hotkey": {
+      "keyCode": 49,
+      "modifiers": [
+        "option"
+      ]
+    },
+    "leadMs": 500,
+    "tailMs": 500,
+    "timeoutMs": 45000,
+    "stableMs": 750,
+    "configurationNote": "English; Context Awareness off; Option+Space; BlackHole 2ch"
+  },
+  "results": {
+    "test-clean": {
+      "samples": [
+        {
+          "id": "4970-29095-0017",
+          "warmup": true,
+          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/4970-29095-0017.wav",
+          "audioDurationSec": 3.93,
+          "language": "en",
+          "reference": "THE SIGHT SEERS RETURNED IN HIGH SPIRITS FROM THE CITY",
+          "hypothesis": "The sight-seers returned in high spirits from the city. ",
+          "status": "ok",
+          "wer": {
+            "substitutions": 1,
+            "insertions": 0,
+            "deletions": 1,
+            "wer": 0.2,
+            "refWords": 10
+          },
+          "audioPlaybackMs": 4189.774990081787,
+          "stopToFirstTextMs": 477.48100757598877,
+          "stopToStableTextMs": 1279.3660163879395
+        },
+        {
+          "id": "6829-68771-0013",
+          "warmup": true,
+          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/6829-68771-0013.wav",
+          "audioDurationSec": 7.19,
+          "language": "en",
+          "reference": "THE ATTENDANCE WAS UNEXPECTEDLY LARGE AND THE GIRLS WERE DELIGHTED FORESEEING GREAT SUCCESS FOR THEIR FETE",
+          "hypothesis": "The attendance was unexpectedly large and the girls were delighted to see great success for their fight. ",
+          "status": "ok",
+          "wer": {
+            "substitutions": 2,
+            "insertions": 1,
+            "deletions": 0,
+            "wer": 0.1875,
+            "refWords": 16
+          },
+          "audioPlaybackMs": 8026.0549783706665,
+          "stopToFirstTextMs": 642.8189277648926,
+          "stopToStableTextMs": 1406.3140153884888
+        },
+        {
+          "id": "2830-3980-0042",
+          "warmup": true,
+          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/2830-3980-0042.wav",
+          "audioDurationSec": 3.02,
+          "language": "en",
+          "reference": "THE WORLD BRANDS THIS A PERNICIOUS DOCTRINE",
+          "hypothesis": "The world brands this a pernicious doctrine. ",
+          "status": "ok",
+          "wer": {
+            "substitutions": 0,
+            "insertions": 0,
+            "deletions": 0,
+            "wer": 0,
+            "refWords": 7
+          },
+          "audioPlaybackMs": 3956.423044204712,
+          "stopToFirstTextMs": 376.3909339904785,
+          "stopToStableTextMs": 1126.8619298934937
+        },
+        {
+          "id": "908-31957-0014",
+          "warmup": false,
+          "audioPath": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean/908-31957-0014.wav",
+          "audioDurationSec": 7.56,
+          "language": "en",
+          "reference": "A RING OF AMETHYST I COULD NOT WEAR HERE PLAINER TO MY SIGHT THAN THAT FIRST KISS",
+          "hypothesis": "A ring of amethyst I could not wear here, plainer to my sight than that first kiss. ",
+          "status": "ok",
+          "wer": {
+            "substitutions": 0,
+            "insertions": 0,
+            "deletions": 0,
+            "wer": 0,
+            "refWords": 17
+          },
+          "audioPlaybackMs": 8525.979995727539,
+          "stopToFirstTextMs": 537.8050804138184,
+          "stopToStableTextMs": 1339.6300077438354
+        }
+      ],
+      "aggregate": {
+        "wer": 0,
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 0,
+        "referenceWords": 17,
+        "scoredSamples": 1,
+        "failures": 0,
+        "meanStopToStableTextMs": 1339.6300077438354
+      }
+    }
+  },
+  "completedAt": "2026-09-02T17:44:48.147Z"
+}

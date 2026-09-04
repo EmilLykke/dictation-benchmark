@@ -1,0 +1,20 @@
+{
+  "harnesses": [
+    "external-product"
+  ],
+  "librispeech": {},
+  "fleurs": {},
+  "inProgress": {
+    "harness": "external-product",
+    "modelId": "wispr-flow",
+    "datasetKey": "test-clean",
+    "datasetType": "librispeech",
+    "partial": {
+      "utterancesDone": 0,
+      "totalWer": 0,
+      "totalRefWords": 0,
+      "totalAudioSec": 0,
+      "totalWallSec": 0
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "dictation-product-benchmark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:native": "swift build -c release --package-path native",
+    "preflight": "bun run src/preflight.ts",
+    "benchmark": "bun run src/runner.ts",
+    "check": "tsc --noEmit && bun test && swift build -c debug --package-path native",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.10",
+    "typescript": "^6.0.0"
+  }
+}
