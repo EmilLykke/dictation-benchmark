@@ -17,7 +17,6 @@ function sample(warmup: boolean, overrides: Record<string, unknown> = {}) {
     audioDurationSec: 2,
     wallClockMs: 3_000,
     audioPlaybackMs: 2_000,
-    stopToFirstTextMs: 200,
     stopToStableTextMs: 500,
     wer: { wer: 0, substitutions: 0, insertions: 0, deletions: 0, refWords: 4 },
     ...overrides,
@@ -155,92 +154,69 @@ describe("Codictate-compatible artifacts", () => {
     expect(leaf.failuresByStatus).toEqual({ timeout: 0, failed: 0 });
   });
 
-  test("averages each latency over the clips that measured it, not over every clip", () => {
+  test("publishes no latency or response-speed aggregate", () => {
     const run = runWith([
-      // A warmup is excluded whatever it measured.
-      sample(true, { stopToFirstTextMs: 9_000, stopToStableTextMs: 9_000 }),
-      sample(false, { stopToFirstTextMs: 100, stopToStableTextMs: 1_000 }),
-      sample(false, { stopToFirstTextMs: 300, stopToStableTextMs: 2_000 }),
-      // Text arrived and never settled: a first-text time, no stable time. The two
-      // means therefore run over different denominators, which is why each is
-      // filtered separately rather than both over the same clip list.
-      sample(false, { status: "timeout", stopToFirstTextMs: 800, stopToStableTextMs: null }),
+      sample(false, { audioDurationSec: 2, stopToStableTextMs: 1_000 }),
+      sample(false, { audioDurationSec: 4, stopToStableTextMs: 2_000 }),
     ]);
-    run.config.samples = 4;
+    run.config.samples = 2;
 
-    const leaf =
-      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
-    expect(leaf.meanStopToFirstTextMs).toBe(400);
-    expect(leaf.meanStopToStableTextMs).toBe(1_500);
+    const leaf = buildCodictateResults(run).librispeech["test-clean"]["external-product"][
+      "wispr-flow"
+    ] as unknown as Record<string, unknown>;
 
-    run.results["test-clean"]!.samples = [
-      sample(false, { status: "timeout", stopToFirstTextMs: null, stopToStableTextMs: null }),
-    ];
-    run.config.samples = 1;
-    // Absent rather than 0: nothing was measured, and 0 ms would read as instant.
-    const nothing =
-      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
-    expect(nothing.meanStopToFirstTextMs).toBeUndefined();
-    expect(nothing.meanStopToStableTextMs).toBeUndefined();
+    // Withheld, not merely absent from this fixture. Every one of these was a sum or a
+    // mean over per-clip `stopToFirstTextMs` values that the bridge recorded with its
+    // own Core Audio output-device restore inside the measured window, worth roughly
+    // 300ms a clip. A consumer cannot tell such an aggregate from a clean one, so the
+    // transform publishes none until a run made after the fix exists.
+    for (const field of [
+      "meanStopToFirstTextMs",
+      "meanStopToStableTextMs",
+      "responseMsPerAudioSec",
+      "totalStopToFirstTextMs",
+      "respondedAudioSec",
+    ]) {
+      expect([field, field in leaf]).toEqual([field, false]);
+    }
   });
 
-  test("divides response time by only the audio that got an answer", () => {
-    const run = runWith([
-      // A warmup is excluded whatever it measured.
-      sample(true, { audioDurationSec: 100, stopToFirstTextMs: 100 }),
-      sample(false, { audioDurationSec: 2, stopToFirstTextMs: 200 }),
-      sample(false, { audioDurationSec: 4, stopToFirstTextMs: 400 }),
-      // Timed out with nothing pasted. Its 94 seconds must leave the denominator as
-      // well as the numerator: keeping the audio while dropping the latency is the
-      // same arithmetic as claiming the product answered it in 0 ms, which drags the
-      // ratio down in exactly the datasets where the product did worst.
-      sample(false, { audioDurationSec: 94, status: "timeout", stopToFirstTextMs: null }),
-    ]);
-    run.config.samples = 4;
-
-    const leaf =
-      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
-    expect(leaf.totalStopToFirstTextMs).toBe(600);
-    expect(leaf.respondedAudioSec).toBe(6);
-    expect(leaf.responseMsPerAudioSec).toBe(100);
-    // What the wrong denominator would have said, named so the difference is visible.
-    expect(leaf.totalAudioSec).toBe(100);
-    expect(leaf.totalStopToFirstTextMs! / leaf.totalAudioSec).toBe(6);
-
-    run.results["test-clean"]!.samples = [
-      sample(false, { status: "timeout", stopToFirstTextMs: null, stopToStableTextMs: null }),
-    ];
-    run.config.samples = 1;
-    // Absent together rather than 0 ms/s, which would read as instant, or 0/0 NaN.
-    const nothing =
-      buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
-    expect(nothing.responseMsPerAudioSec).toBeUndefined();
-    expect(nothing.totalStopToFirstTextMs).toBeUndefined();
-    expect(nothing.respondedAudioSec).toBeUndefined();
-  });
-
-  test("keeps meanRTF off the comparable response figure", () => {
+  test("keeps meanRTF as what the harness clocked, playback included", () => {
     const run = runWith([sample(false, { audioDurationSec: 2, wallClockMs: 3_000 })]);
     run.config.samples = 1;
 
     const leaf =
       buildCodictateResults(run).librispeech["test-clean"]["external-product"]["wispr-flow"];
-    // meanRTF stays what the harness clocked, playback included. The two must not
-    // converge: the comparable figure is in ms per audio second, meanRTF is floored at
-    // 1.0 by playback the harness chose to do.
+    // Unchanged and still not a speed figure: the harness plays every clip through a
+    // virtual microphone at 1.0x real time, so this cannot fall below 1.0 whatever the
+    // product does. It is published because it is what was measured, and nothing on
+    // this leaf offers it as an inference speed.
     expect(leaf.meanRTF).toBe(1.5);
-    expect(leaf.responseMsPerAudioSec).toBe(100);
   });
 
-  test("publishes the stability window its stable figure includes", () => {
+  test("publishes the timing terms the harness chose", () => {
     const run = runWith([sample(false)]);
     run.config.samples = 1;
     run.config.stableMs = 750;
+    run.config.pollIntervalMs = 10;
 
-    // The window is on every stable figure, because the harness stamps the timestamp
-    // when the wait finishes. Published so a consumer can subtract it instead of
-    // knowing it by heart.
+    // Both are the harness's own contributions to what it measures: the stability
+    // window is a wait it imposes before stamping a stable time, and the poll interval
+    // is the granularity of every per-clip first-text time. Published so a reader can
+    // account for them rather than know them by heart.
     expect(buildCodictateResults(run).config.stableMs).toBe(750);
+    expect(buildCodictateResults(run).config.pollIntervalMs).toBe(10);
+  });
+
+  test("omits the poll interval for a run recorded before it was configurable", () => {
+    const run = runWith([sample(false)]);
+    run.config.samples = 1;
+    delete run.config.pollIntervalMs;
+
+    // Absent rather than backfilled. Those runs used a hardcoded 50ms, but writing 50
+    // into a record that never named one would publish a config the run did not have.
+    const config = buildCodictateResults(run).config as Record<string, unknown>;
+    expect("pollIntervalMs" in config).toBe(false);
   });
 
   test("checkpoints Codictate partial totals and promotes completed dataset", () => {
@@ -310,152 +286,67 @@ describe("committed run records", () => {
 
   const DATASETS = ["da_dk", "es_419", "hu_hu", "test-clean", "test-other"];
 
-  test("publish the same stop-to-stable-text latency the run's own aggregate recorded", () => {
-    const emitted = Object.fromEntries(
-      Object.entries(leaves).map(([dataset, leaf]) => [
-        dataset,
-        leaf["external-product"]["wispr-flow"].meanStopToStableTextMs,
-      ]),
-    );
-    const aggregated = Object.fromEntries(
-      Object.entries(
-        record.results as Record<string, { aggregate: { meanStopToStableTextMs: number } }>,
-      ).map(([dataset, result]) => [dataset, result.aggregate.meanStopToStableTextMs]),
-    );
+  test("publish no speed figure, because this run's window held the harness's restore", () => {
+    expect(Object.keys(leaves).sort()).toEqual(DATASETS);
 
-    expect(Object.keys(emitted).sort()).toEqual(DATASETS);
-    expect(emitted).toEqual(aggregated);
-  });
-
-  test("publish a first-text latency averaged over the clips that got text", () => {
     for (const dataset of DATASETS) {
-      const samples = (
-        record.results as Record<
-          string,
-          { samples: { warmup: boolean; stopToFirstTextMs: number | null }[] }
-        >
-      )[dataset].samples;
-      const measured = samples
-        .filter((s) => !s.warmup)
-        .map((s) => s.stopToFirstTextMs)
-        .filter((v): v is number => v !== null);
-      const expected = measured.reduce((a, b) => a + b, 0) / measured.length;
-
-      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
-      expect([dataset, leaf.meanStopToFirstTextMs]).toEqual([dataset, expected]);
-      // The denominator is the clips that measured something, never all 397: hu_hu
-      // timed out 13 times with nothing pasted, and averaging those as 0 would make
-      // the slowest dataset read fastest.
-      expect([dataset, measured.length]).toEqual([
-        dataset,
-        dataset === "hu_hu" ? 384 : dataset === "da_dk" ? 396 : 397,
-      ]);
+      const leaf = leaves[dataset]["external-product"][
+        "wispr-flow"
+      ] as unknown as Record<string, unknown>;
+      for (const field of [
+        "meanStopToFirstTextMs",
+        "meanStopToStableTextMs",
+        "responseMsPerAudioSec",
+        "totalStopToFirstTextMs",
+        "respondedAudioSec",
+      ]) {
+        expect([dataset, field, field in leaf]).toEqual([dataset, field, false]);
+      }
+      // meanRTF survives, and is still floored by our own 1.0x playback.
+      expect([dataset, (leaf.meanRTF as number) > 1]).toEqual([dataset, true]);
     }
+
+    // And this run recorded no poll interval, so its stt.json names none.
+    const config = built.config as Record<string, unknown>;
+    expect("pollIntervalMs" in config).toBe(false);
   });
 
-  test("publish a stable figure that is the first-text one plus the harness's window", () => {
-    const stableMs = built.config.stableMs;
-    expect(stableMs).toBe(750);
-
-    for (const dataset of DATASETS) {
-      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
-      // The window is the bulk of the gap between the two figures, which is the whole
-      // reason the stable one must not be published as measured: the harness waits
-      // 750 ms before stamping it, so it overstates the product by roughly that much.
-      const corrected = leaf.meanStopToStableTextMs! - stableMs;
-      expect([dataset, corrected - leaf.meanStopToFirstTextMs! < 100]).toEqual([dataset, true]);
-      expect([dataset, corrected > leaf.meanStopToFirstTextMs!]).toEqual([dataset, true]);
-
-      // And meanRTF is not any of these: the harness plays every clip at 1.0x real
-      // time, so it cannot fall below 1.0 whatever the product does.
-      expect([dataset, leaf.meanRTF > 1]).toEqual([dataset, true]);
-    }
-  });
-
-  const RESPONSE_MS_PER_AUDIO_SEC: Record<string, number> = {
-    "test-clean": 81,
-    "test-other": 85,
-    es_419: 61,
-    da_dk: 190,
-    hu_hu: 176,
-  };
-
-  test("publish the response time per audio second the run's own samples give", () => {
-    for (const dataset of DATASETS) {
-      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
-      expect([dataset, Math.round(leaf.responseMsPerAudioSec!)]).toEqual([
-        dataset,
-        RESPONSE_MS_PER_AUDIO_SEC[dataset],
-      ]);
-      // The published ratio is exactly its two published sums, so a consumer can pool
-      // datasets without re-deriving anything from results.json.
-      expect([dataset, leaf.totalStopToFirstTextMs! / leaf.respondedAudioSec!]).toEqual([
-        dataset,
-        leaf.responseMsPerAudioSec!,
-      ]);
-    }
-  });
-
-  test("drop a timed-out clip from both sides of the response ratio", () => {
-    for (const dataset of DATASETS) {
-      const samples = (
+  test("show the fixed harness cost that is the reason no speed figure is published", () => {
+    const answered = DATASETS.flatMap((dataset) =>
+      (
         record.results as Record<
           string,
           {
             samples: {
               warmup: boolean;
-              status: string;
               audioDurationSec: number;
               stopToFirstTextMs: number | null;
             }[];
           }
         >
-      )[dataset].samples;
-      const scored = samples.filter((s) => !s.warmup);
-      const answered = scored.filter((s) => s.stopToFirstTextMs !== null);
-      const leaf = leaves[dataset]["external-product"]["wispr-flow"];
+      )[dataset].samples
+        .filter((s) => !s.warmup && s.stopToFirstTextMs !== null)
+        .map((s) => ({ ms: s.stopToFirstTextMs!, sec: s.audioDurationSec })),
+    );
+    const fastest = [...answered].sort((a, b) => a.ms - b.ms).slice(0, 15);
 
-      expect([dataset, leaf.totalStopToFirstTextMs]).toEqual([
-        dataset,
-        answered.reduce((a, s) => a + s.stopToFirstTextMs!, 0),
-      ]);
-      // The denominator is the answered clips' audio, never totalAudioSec: da_dk and
-      // hu_hu each lose the timed-out clips' seconds off the bottom too.
-      expect([dataset, leaf.respondedAudioSec]).toEqual([
-        dataset,
-        answered.reduce((a, s) => a + s.audioDurationSec, 0),
-      ]);
-      const dropped = scored.length - answered.length;
-      expect([dataset, dropped]).toEqual([
-        dataset,
-        dataset === "hu_hu" ? 13 : dataset === "da_dk" ? 1 : 0,
-      ]);
-      expect([dataset, leaf.respondedAudioSec! < leaf.totalAudioSec]).toEqual([
-        dataset,
-        dropped > 0,
-      ]);
-    }
+    // A marginal cost would put the quickest clips on the shortest audio. These fifteen
+    // sit inside a 50ms band while their audio spans more than two seconds, which is
+    // the signature of a fixed cost: the bridge restored the default output device on
+    // the line after the stop hotkey, synchronously, inside the measured window.
+    expect(Math.min(...fastest.map((c) => c.ms))).toBeGreaterThan(250);
+    expect(Math.max(...fastest.map((c) => c.ms))).toBeLessThan(330);
+    expect(
+      Math.max(...fastest.map((c) => c.sec)) - Math.min(...fastest.map((c) => c.sec)),
+    ).toBeGreaterThan(2);
 
-    // Counting the 13 timed-out hu_hu clips as 0 ms instead would have published 168
-    // and made the slowest dataset read faster than da_dk. Named so the shortcut
-    // cannot come back unnoticed.
-    const huHu = leaves["hu_hu"]["external-product"]["wispr-flow"];
-    expect(Math.round(huHu.totalStopToFirstTextMs! / huHu.totalAudioSec)).toBe(168);
-    expect(Math.round(huHu.responseMsPerAudioSec!)).toBe(176);
-  });
-
-  test("pool audio-weighted to the figure a consumer publishes", () => {
-    const all = DATASETS.map((d) => leaves[d]["external-product"]["wispr-flow"]);
-    const pooled =
-      all.reduce((a, leaf) => a + leaf.totalStopToFirstTextMs!, 0) /
-      all.reduce((a, leaf) => a + leaf.respondedAudioSec!, 0);
-    expect(Math.round(pooled)).toBe(123);
-
-    // Not the unweighted mean of the five ratios, which is what publishing only the
-    // ratio per dataset would have invited.
-    const unweighted =
-      all.reduce((a, leaf) => a + leaf.responseMsPerAudioSec!, 0) / all.length;
-    expect(Math.round(unweighted)).toBe(119);
+    // What publishing it would have cost. Pooled audio-weighted the run reads 123 ms
+    // per audio second; charge the fixed term back to the harness and it reads under
+    // 100, which reverses the ordering against large-v3-q5_0 at 99.
+    const totalMs = answered.reduce((a, c) => a + c.ms, 0);
+    const totalSec = answered.reduce((a, c) => a + c.sec, 0);
+    expect(Math.round(totalMs / totalSec)).toBe(123);
+    expect(Math.round((totalMs - 300 * answered.length) / totalSec)).toBeLessThan(100);
   });
 
   test("publish a breakdown that adds back up to the failure count", () => {

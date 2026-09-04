@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { DATASET_IDS, type ManifestEntry } from "../src/types";
-import { transcribeRequest, withTimeoutMs, type RunConfig } from "../src/runner";
+import {
+  transcribeRequest,
+  withPollIntervalMs,
+  withTimeoutMs,
+  type RunConfig,
+} from "../src/runner";
 
 describe("benchmark CLI defaults", () => {
   test("plans every dataset when --datasets is omitted", async () => {
@@ -41,6 +46,7 @@ const CONFIG: RunConfig = {
   tailMs: 500,
   timeoutMs: 45_000,
   stableMs: 750,
+  pollIntervalMs: 10,
   configurationNote: "",
 };
 
@@ -94,5 +100,37 @@ describe("resuming older run records", () => {
     const config = withTimeoutMs({ ...CONFIG, timeoutMs: 45_000, timeoutBudgetMs: 30_000 });
 
     expect(config.timeoutMs).toBe(45_000);
+  });
+
+  test("fills in the 50ms poll interval those runs actually used", () => {
+    const { pollIntervalMs: _dropped, ...legacy } = CONFIG;
+    const config = withPollIntervalMs(legacy as RunConfig);
+
+    // Not the current 10ms default: resuming at a finer granularity would give the two
+    // halves of one run different stopToFirstTextMs resolution.
+    expect(config.pollIntervalMs).toBe(50);
+    expect(transcribeRequest(config, entry(2)).pollIntervalMs).toBe(50);
+  });
+
+  test("keeps an interval a record already names", () => {
+    expect(withPollIntervalMs({ ...CONFIG, pollIntervalMs: 25 }).pollIntervalMs).toBe(25);
+  });
+});
+
+describe("poll interval", () => {
+  // The interval is the granularity of stopToFirstTextMs: text landing between two
+  // reads is not seen until the later one, so the measurement carries a mean upward
+  // bias of half an interval. It was 50ms, worth +25ms; 10ms makes it +5ms.
+  test("is sent to the bridge and is small enough not to dominate a measurement", () => {
+    const request = transcribeRequest(CONFIG, entry(2));
+
+    expect(request.pollIntervalMs).toBe(10);
+    expect(request.pollIntervalMs / 2).toBeLessThanOrEqual(5);
+  });
+
+  test("defaults rather than sending undefined for a record without one", () => {
+    const { pollIntervalMs: _dropped, ...legacy } = CONFIG;
+
+    expect(transcribeRequest(legacy as RunConfig, entry(2)).pollIntervalMs).toBe(10);
   });
 });

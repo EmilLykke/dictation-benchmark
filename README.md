@@ -148,6 +148,67 @@ bun run benchmark -- \
   --configuration-note "Flow version recorded in results; multilingual/Auto-detect; Context Awareness off; clean dictionary"
 ```
 
+## Response time, and why no speed figure comes out of the committed run
+
+The per-clip `stopToFirstTextMs` in `results.json` is the gap between the stop
+hotkey and text appearing in the receiver window. It is the only timing an
+external product allows, and for one run it was published as a speed figure.
+That was wrong, and this section is the record of it.
+
+**What went wrong.** `main.swift` stamped `stoppedAt` on the line after the stop
+hotkey, and then, on the next line, restored the user's default output device
+with `setDefaultOutputDevice`. That call is synchronous and blocks while Core
+Audio reconfigures. `switchedOutput` is true on every clip, because the device
+is restored after each clip and the next clip switches again, so every
+`stopToFirstTextMs` this harness ever recorded contains one output-device
+restore.
+
+**How much.** Roughly 300 ms per clip, and it is visible in the data rather than
+merely plausible. In `results/20260902_181511_wispr-flow-all-400`, the fifteen
+fastest scored clips are 271 to 321 ms at audio durations of 1.7 to 4.0 seconds.
+A cost that does not move while the audio it supposedly processes more than
+doubles is a fixed cost, not marginal work, and it is the whole of the
+regression intercepts: 317 ms on test-clean, 316 on test-other, 285 on es_419.
+
+**What it cost the conclusion.** That run pooled to 123 ms per second of audio.
+Charge the fixed term back to the harness and it pools to 91 to 96, which is
+faster than `large-v3-q5_0` at 99 rather than slower. The published ordering was
+an artifact of the measuring apparatus, so **no speed figure is published from
+this run**, and `stt.json` carries none: `responseMsPerAudioSec`,
+`totalStopToFirstTextMs`, `respondedAudioSec`, `meanStopToFirstTextMs` and
+`meanStopToStableTextMs` were all removed from the transform. The raw per-clip
+numbers stay in `results.json`, where they are labelled as what they are.
+
+**What was fixed, for runs after 2026-09-04.**
+
+- The restore moved out of the measured window rather than the stamp moving
+  later. `stoppedAt` has to keep meaning "the instant the stop hotkey was
+  delivered"; stamping it after the restore would have produced the same clean
+  number by quietly redefining the measurement. The bridge now restores the
+  device on the way out of `transcribe`, after the response window has closed.
+- Each clip records its own overhead. `outputDeviceRestoreMs` is the measured
+  cost of that restore, now beside the latency instead of inside it, and
+  `stopToFirstTextHarnessMs` is the harness work that remains inside the
+  window: time spent hopping to the main thread to read the receiver window,
+  summed over the polls up to the one that first saw text. A future run states
+  its overhead as a measurement instead of leaving a reader to infer it from
+  the floor of a scatter plot.
+- The poll interval dropped from a hardcoded 50 ms to a configurable 10 ms.
+  The interval is the granularity of `stopToFirstTextMs`, so it is a mean
+  upward bias of half an interval: 25 ms became 5 ms. It is verifiably jitter
+  rather than quantization in the committed run, whose latencies are near
+  uniform modulo 50 ms. The value used is recorded in `results.json` under
+  `config.pollIntervalMs`, and in `stt.json` under `config.pollIntervalMs`
+  beside `config.stableMs`, so a run is self-describing about both of the
+  harness's own timing terms. Set it with `--poll-interval-ms <n>`. Runs made
+  before the field existed have no value; resuming one fills in the 50 ms the
+  bridge used at the time, so the two halves of a single run keep one
+  granularity.
+
+A future run made with this bridge can publish a speed figure. Reinstating the
+aggregates in `src/codictate-compat.ts` is the deliberate second step, taken
+once such a run exists and can print its own overhead next to its own number.
+
 ## Metrics and comparison rules
 
 - Audio always plays at 1.0×. Core Audio/BlackHole stays real-time.
@@ -156,10 +217,9 @@ bun run benchmark -- \
 - Aggregate WER excludes three warmups per dataset.
 - Exact output remains preserved alongside normalized WER operations. FLEURS also receives Codictate-compatible CER against raw transcript.
 - `stt.json` exposes the same `wer`, `cer`, `meanRTF`, `utteranceCount`, `totalAudioSec`, and `totalWallSec` fields as Codictate. `peakRSS_MB` is `null` because process memory is not meaningful for a managed external product.
-- WER and CER are directly comparable when conditions match. Flow `meanRTF` covers the full real-time product path (lead-in, playback, cloud processing, and paste), while Codictate RTF covers offline inference; do not treat their speed values as equivalent workloads.
-- `responseMsPerAudioSec` is the speed figure that *is* comparable with Codictate's: milliseconds of waiting per second of audio dictated, as `totalStopToFirstTextMs / respondedAudioSec`. Both sums are published so datasets pool audio-weighted, as `sum(totalStopToFirstTextMs) / sum(respondedAudioSec)`; averaging the per-dataset ratios unweighted is wrong. Clips that returned no text leave both sums, because keeping their audio in the denominator is the same as calling their latency 0 ms.
-- State alongside it that Flow streams audio while the user is still speaking, so part of its transcription overlaps with speech and is invisible here. The figure is the wait after stopping, per second of audio dictated; Codictate's is its entire inference, all of which the user waits for. Both answer "how long do I wait per second of audio I dictated", and neither is Flow's total compute.
-- Stop-to-first-text and stop-to-stable-text remain in rich `results.json` for product latency analysis.
+- WER and CER are directly comparable when conditions match. Speed is not: `stt.json` publishes no speed or latency aggregate at all. `meanRTF` remains on the leaf because it is what the harness clocked, but it is floored at 1.0 by playback the harness chose to do and is not comparable with Codictate's inference RTF or with anything else.
+- Stop-to-first-text and stop-to-stable-text remain in rich `results.json` for product latency analysis, with `stopToFirstTextHarnessMs` and `outputDeviceRestoreMs` beside them. Read [Response time](#response-time-and-why-no-speed-figure-comes-out-of-the-committed-run) before deriving a speed figure from a run recorded before 2026-09-04: those runs restored the default output device inside the measured window.
+- If a future run does publish one, state alongside it that Flow streams audio while the user is still speaking, so part of its transcription overlaps with speech and is invisible here, and that the figure is the wait after stopping rather than Flow's total compute.
 - Compare same clip IDs, language configuration, date window, machine, and repeat count. Flow service/model changes require new versioned runs.
 
 ## Checks

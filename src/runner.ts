@@ -25,6 +25,23 @@ import {
 const WARMUP_COUNT = 3;
 const DEFAULT_TIMEOUT_MS = 45_000;
 
+/**
+ * How often the bridge re-reads the receiver window while waiting for text.
+ *
+ * This is the granularity of `stopToFirstTextMs`: text that lands between two polls
+ * is not seen until the later one, so the measurement carries a mean upward bias of
+ * half an interval. It was 50ms and hardcoded in the bridge, worth a mean +25ms;
+ * 10ms cuts that to +5ms while still sleeping between reads rather than spinning.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 10;
+
+/**
+ * The interval runs made before `pollIntervalMs` existed actually used, hardcoded in
+ * `main.swift`. Only used to fill the field in when resuming one of those runs, so
+ * the second half of a run keeps the granularity the first half had.
+ */
+const LEGACY_POLL_INTERVAL_MS = 50;
+
 export interface RunConfig {
   /**
    * Absolute path to the Codictate checkout in memory; serialised as
@@ -54,6 +71,16 @@ export interface RunConfig {
    */
   timeoutBudgetMs?: number;
   stableMs: number;
+  /**
+   * How often the bridge re-reads the receiver window while waiting for text, and so
+   * the granularity of every `stopToFirstTextMs` in the run. Recorded for the same
+   * reason `stableMs` is: it is a term in the measurement, and a reader who cannot
+   * see it cannot correct for it.
+   *
+   * Optional on the type only because runs written before it existed have no value;
+   * `withPollIntervalMs` fills those in on resume. Always written for new runs.
+   */
+  pollIntervalMs?: number;
   configurationNote: string;
 }
 
@@ -72,6 +99,10 @@ interface SampleResult {
   wallClockMs?: number;
   stopToFirstTextMs: number | null;
   stopToStableTextMs: number | null;
+  /** See `TranscriptionResult`. The harness's measured share of the line above. */
+  stopToFirstTextHarnessMs?: number | null;
+  /** See `TranscriptionResult`. Measured, and outside the window above. */
+  outputDeviceRestoreMs?: number | null;
   diagnostic?: string;
 }
 
@@ -130,7 +161,10 @@ async function main(): Promise<void> {
     runDir = resolve(options.resume);
     run = JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")) as BenchmarkRun;
     if (run.status === "completed") throw new Error(`Run already completed: ${runDir}`);
-    run.config = withCodictatePath(withTimeoutMs(run.config), options.config.codictatePath);
+    run.config = withCodictatePath(
+      withPollIntervalMs(withTimeoutMs(run.config)),
+      options.config.codictatePath,
+    );
   } else {
     if (!options.name) throw new Error("--name is required for a new run");
     const runId = `${timestamp()}_${slug(options.name)}`;
@@ -227,6 +261,8 @@ async function main(): Promise<void> {
           wallClockMs,
           stopToFirstTextMs: transcription.stopToFirstTextMs,
           stopToStableTextMs: transcription.stopToStableTextMs,
+          stopToFirstTextHarnessMs: transcription.stopToFirstTextHarnessMs,
+          outputDeviceRestoreMs: transcription.outputDeviceRestoreMs,
           diagnostic: transcription.diagnostic,
         });
         result.aggregate = aggregate(result.samples);
@@ -270,7 +306,24 @@ export function transcribeRequest(config: RunConfig, entry: ManifestEntry): Tran
     tailMs: config.tailMs,
     timeoutMs: config.timeoutMs,
     stableMs: config.stableMs,
+    pollIntervalMs: config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
   };
+}
+
+/**
+ * Fills in the poll interval a run recorded before the field existed.
+ *
+ * Those runs used the 50ms that was hardcoded in `main.swift`, so that is what goes
+ * in: resuming one of them at the current 10ms would give the two halves of a single
+ * run different `stopToFirstTextMs` granularity. A record that already names an
+ * interval keeps it.
+ */
+export function withPollIntervalMs(config: RunConfig): RunConfig {
+  if (typeof config.pollIntervalMs === "number") return config;
+  console.log(
+    `Resumed run recorded no pollIntervalMs; using the ${LEGACY_POLL_INTERVAL_MS}ms the bridge used then.`,
+  );
+  return { ...config, pollIntervalMs: LEGACY_POLL_INTERVAL_MS };
 }
 
 /**
@@ -404,6 +457,7 @@ function printPlan(
   console.log(`Audio:     ${(audioSeconds / 60).toFixed(1)} minutes at 1.0×`);
   console.log(`Input:     ${run.config.deviceName}`);
   console.log(`Timeout:   ${run.config.timeoutMs}ms after dictation stops (flat; same for every clip)`);
+  console.log(`Polling:   every ${run.config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS}ms (granularity of stopToFirstTextMs)`);
   console.log(`Output:    ${runDir}`);
 }
 
@@ -418,6 +472,7 @@ function parseArgs(args: string[]): CliOptions {
     tailMs: 500,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     stableMs: 750,
+    pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
     configurationNote: "",
   };
   const options: CliOptions = { dryRun: false, config };
@@ -437,6 +492,7 @@ function parseArgs(args: string[]): CliOptions {
       case "--datasets": config.datasets = parseDatasets(value()); break;
       case "--samples": config.samples = positiveInteger(value(), flag); break;
       case "--timeout-ms": config.timeoutMs = positiveInteger(value(), flag); break;
+      case "--poll-interval-ms": config.pollIntervalMs = positiveInteger(value(), flag); break;
       case "--device": config.deviceName = value(); break;
       case "--configuration-note": config.configurationNote = value(); break;
       default: throw new Error(`Unknown flag: ${flag}`);

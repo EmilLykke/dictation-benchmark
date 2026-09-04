@@ -20,6 +20,7 @@ private struct Request: Decodable {
     let tailMs: Int?
     let timeoutMs: Int?
     let stableMs: Int?
+    let pollIntervalMs: Int?
 }
 
 private enum BridgeError: LocalizedError {
@@ -167,6 +168,7 @@ private final class Bridge {
         let tailMs = try require(request.tailMs, "tailMs")
         let timeoutMs = try require(request.timeoutMs, "timeoutMs")
         let stableMs = try require(request.stableMs, "stableMs")
+        let pollIntervalMs = try require(request.pollIntervalMs, "pollIntervalMs")
 
         guard let outputDevice = audioDevices().first(where: { $0.name == deviceName }) else {
             throw BridgeError.audio("Audio device not found: \(deviceName)")
@@ -174,9 +176,35 @@ private final class Bridge {
         let previousOutput = try defaultOutputDevice()
         let switchedOutput = previousOutput != outputDevice.id
         var outputRestored = false
+        var outputDeviceRestoreMs: Double?
         if switchedOutput {
             try setDefaultOutputDevice(outputDevice.id)
             Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        /// Puts the user's own output device back, and records what Core Audio charged
+        /// for it.
+        ///
+        /// Called on every return path, which is to say *after* the response window has
+        /// closed. Until 2026-09-04 this ran on the line after the stop hotkey, inside
+        /// the window: `setDefaultOutputDevice` is synchronous and blocks while the HAL
+        /// reconfigures, so it put a floor of roughly 300ms under every
+        /// `stopToFirstTextMs` this harness had ever recorded, flat against clip length.
+        ///
+        /// The window was moved rather than the stamp. `stoppedAt` has to keep meaning
+        /// "the instant the stop hotkey was delivered" - stamping it after the restore
+        /// would have produced the same clean number by quietly redefining the thing
+        /// being measured, and nothing about the device switch belongs to the product.
+        func restoreOutputDevice() {
+            guard switchedOutput, !outputRestored else { return }
+            let startedAt = Date()
+            do {
+                try setDefaultOutputDevice(previousOutput)
+                outputRestored = true
+                outputDeviceRestoreMs = Date().timeIntervalSince(startedAt) * 1_000
+            } catch {
+                // Left unrestored on purpose: the defer below retries before returning.
+            }
         }
         defer {
             if switchedOutput, !outputRestored {
@@ -194,34 +222,47 @@ private final class Bridge {
             playbackMs = try playAudio(path: audioPath)
         } catch {
             try? post(hotkey)
+            restoreOutputDevice()
             return [
                 "status": "failed",
                 "transcript": "",
                 "audioPlaybackMs": 0,
                 "stopToFirstTextMs": NSNull(),
                 "stopToStableTextMs": NSNull(),
+                "stopToFirstTextHarnessMs": NSNull(),
+                "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
                 "diagnostic": error.localizedDescription,
             ]
         }
 
         Thread.sleep(forTimeInterval: Double(tailMs) / 1_000)
         try post(hotkey)
+
+        // Nothing but the product's own work may sit between this stamp and the poll
+        // loop below. `stoppedAt` is the instant the stop hotkey was delivered, and
+        // every millisecond after it is attributed to Flow, so any harness work put
+        // here is charged to the product. The output-device restore used to live on
+        // the next line; it now runs on the way out. See `restoreOutputDevice`.
         let stoppedAt = Date()
-        if switchedOutput {
-            do {
-                try setDefaultOutputDevice(previousOutput)
-                outputRestored = true
-            } catch {
-                // Defer retries restoration before returning to caller.
-            }
-        }
+
         var firstTextAt: Date?
         var lastChangeAt: Date?
         var lastText = ""
+
+        /// The harness's own share of `stopToFirstTextMs`, measured rather than argued
+        /// about: the time spent inside `DispatchQueue.main.sync` reading the receiver
+        /// window, summed over the polls up to and including the one that first saw
+        /// text. Published so a run states its own overhead instead of leaving a reader
+        /// to infer it from the floor of a latency-against-duration scatter plot.
+        var stopToFirstTextHarnessMs = 0.0
         let deadline = stoppedAt.addingTimeInterval(Double(timeoutMs) / 1_000)
 
         while Date() < deadline {
+            let readStartedAt = Date()
             let text = onMain { self.captureWindow?.capturedText() ?? "" }
+            if firstTextAt == nil {
+                stopToFirstTextHarnessMs += Date().timeIntervalSince(readStartedAt) * 1_000
+            }
             let hasMeaningfulText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if text != lastText {
                 lastText = text
@@ -232,23 +273,34 @@ private final class Bridge {
                let changedAt = lastChangeAt,
                Date().timeIntervalSince(changedAt) * 1_000 >= Double(stableMs)
             {
+                let stableAt = Date()
+                restoreOutputDevice()
                 return [
                     "status": "ok",
                     "transcript": text,
                     "audioPlaybackMs": playbackMs,
                     "stopToFirstTextMs": milliseconds(from: stoppedAt, to: firstTextAt),
-                    "stopToStableTextMs": milliseconds(from: stoppedAt, to: Date()),
+                    "stopToStableTextMs": milliseconds(from: stoppedAt, to: stableAt),
+                    "stopToFirstTextHarnessMs": firstTextAt == nil
+                        ? NSNull()
+                        : stopToFirstTextHarnessMs as Any,
+                    "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
                 ]
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: Double(pollIntervalMs) / 1_000)
         }
 
+        restoreOutputDevice()
         return [
             "status": "timeout",
             "transcript": lastText,
             "audioPlaybackMs": playbackMs,
             "stopToFirstTextMs": milliseconds(from: stoppedAt, to: firstTextAt),
             "stopToStableTextMs": NSNull(),
+            "stopToFirstTextHarnessMs": firstTextAt == nil
+                ? NSNull()
+                : stopToFirstTextHarnessMs as Any,
+            "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
             "diagnostic": lastText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Flow did not paste text before timeout"
                 : "Pasted text did not stabilize before timeout",

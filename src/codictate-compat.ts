@@ -15,7 +15,11 @@ export interface CompatibleSample {
   audioDurationSec: number;
   wallClockMs?: number;
   audioPlaybackMs: number;
-  stopToFirstTextMs: number | null;
+  /**
+   * Kept only because `sampleWallMs` falls back to it for runs written before
+   * `wallClockMs` existed. Deliberately not aggregated: see the note on this
+   * file's removed latency fields.
+   */
   stopToStableTextMs: number | null;
   wer: WerResult;
   cer?: CerResult;
@@ -43,6 +47,7 @@ export interface CompatibleRun {
     leadMs: number;
     tailMs: number;
     stableMs: number;
+    pollIntervalMs?: number;
     configurationNote: string;
   };
   results: Partial<Record<DatasetId, CompatibleDataset>>;
@@ -65,79 +70,26 @@ export interface CodictateModelDatasetResult {
   /** Reference characters the CER was divided by. Absent wherever `cer` is absent. */
   referenceChars?: number;
   meanRTF: number;
-  /**
-   * Mean milliseconds from the stop hotkey to text arriving in the receiver window.
+  /*
+   * No latency or response-speed aggregate is published here, on purpose.
    *
-   * This, not `meanRTF`, is the product's response time. The harness plays every clip
-   * through a virtual microphone at 1.0x real time, so `totalWallSec` can never fall
-   * below `totalAudioSec` and `meanRTF` is floored at 1.0 by the harness itself - about
-   * two thirds of it is playback we chose to do, not the product responding.
+   * This leaf used to carry `meanStopToFirstTextMs`, `meanStopToStableTextMs`,
+   * `responseMsPerAudioSec`, `totalStopToFirstTextMs` and `respondedAudioSec`. Every
+   * one of them was a sum or a mean of the per-clip `stopToFirstTextMs` that the
+   * bridge recorded with its own output-device restore inside the measured window:
+   * a synchronous Core Audio call, roughly 300ms, charged to the product on every
+   * clip. It showed up as a floor of about 317ms that was flat against clip length,
+   * and it was the whole of the fixed term in the fast datasets. Pooled, it moved
+   * the published figure from 123 ms per audio second to 91 to 96, which reverses
+   * the ordering against `large-v3-q5_0` at 99.
    *
-   * Averaged over the scored clips that recorded one, which is not every scored clip:
-   * a clip that timed out with nothing pasted records `null`, and a null averaged as 0
-   * would read as instant. Optional for the same reason `cer` is - a dataset that got
-   * nothing back at all has nothing to average, and is absent here rather than 0.
+   * `main.swift` no longer restores the device inside the window and now records
+   * both `stopToFirstTextHarnessMs` and `outputDeviceRestoreMs` per clip, so a
+   * future run can publish a speed figure and say what its own overhead was. This
+   * transform stays silent about speed until such a run exists, because a consumer
+   * cannot tell a clean aggregate from a contaminated one by looking at it. The raw
+   * per-clip numbers stay in `results.json`, where they are what they say they are.
    */
-  meanStopToFirstTextMs?: number;
-  /**
-   * Mean milliseconds from the stop hotkey to the moment the pasted text stopped
-   * changing. Same denominator rule as `meanStopToFirstTextMs`, and it can differ:
-   * text that arrived but never settled records a first-text time and no stable time.
-   *
-   * NOT the product's own settling time. The harness declares text stable only once it
-   * has been unchanged for `config.stableMs`, and stamps the timestamp when that wait
-   * finishes, so every value here carries that window on top of the real one. Subtract
-   * `config.stableMs` before publishing it. It is emitted raw, with the window emitted
-   * beside it, so the correction happens where a reader can see it rather than inside
-   * this transform.
-   */
-  meanStopToStableTextMs?: number;
-  /**
-   * Milliseconds of waiting this product cost per second of audio dictated:
-   * `totalStopToFirstTextMs / respondedAudioSec`.
-   *
-   * Deliberately NOT called `meanRTF`, and `meanRTF` must never be set to it. Codictate's
-   * `meanRTF` is `totalWallSec / totalAudioSec` around its own inference call and nothing
-   * else, so its unit is seconds of work per second of audio; this is the same unit in
-   * milliseconds, over the only stretch of this product's work the harness can see.
-   * `meanRTF` on this leaf stays what the harness actually clocked, which is dominated by
-   * the 1.0x playback the harness chose to do, and is not comparable to anything.
-   *
-   * A ratio rather than the flat `meanStopToFirstTextMs` because the wait scales with
-   * clip length: per-sample `stopToFirstTextMs` regressed on `audioDurationSec` gives
-   * r = 0.59 to 0.90 with slopes of 38 to 77 ms per audio second, so most of it is work
-   * proportional to the audio and not a fixed round trip.
-   *
-   * Read it as "how long do I wait per second of audio I dictated", which is the same
-   * question Codictate's figure answers, and not as this product's total compute: Flow
-   * streams audio while the user is still speaking, so part of its transcription overlaps
-   * with speech and never appears in this measurement.
-   *
-   * Absent under the same rule as `meanStopToFirstTextMs`, and for the same reason: a
-   * dataset that got nothing back has no numerator, and 0 would read as instant.
-   */
-  responseMsPerAudioSec?: number;
-  /**
-   * The numerator of `responseMsPerAudioSec`: summed `stopToFirstTextMs` over the scored
-   * clips that recorded one. Emitted because it is not recoverable from
-   * `meanStopToFirstTextMs` without the clip count that mean was taken over, and that
-   * count is not `utteranceCount` - hu_hu timed out 13 times with nothing pasted.
-   */
-  totalStopToFirstTextMs?: number;
-  /**
-   * The denominator of `responseMsPerAudioSec`: summed `audioDurationSec` over those same
-   * clips, and deliberately not `totalAudioSec`.
-   *
-   * A timed-out clip has no latency to put in the numerator, so its audio must leave the
-   * denominator too. Counting it on the bottom only would be identical to counting its
-   * latency as 0, which makes the slowest datasets read fastest: hu_hu is 176 ms/s over
-   * the clips that answered and 168 over all of them.
-   *
-   * Published so a consumer can pool datasets audio-weighted as
-   * `sum(totalStopToFirstTextMs) / sum(respondedAudioSec)`, matching how Codictate pools
-   * `totalWallSec / totalAudioSec`. Averaging the per-dataset ratios unweighted is wrong.
-   */
-  respondedAudioSec?: number;
   peakRSS_MB: null;
   utteranceCount: number;
   /**
@@ -186,11 +138,16 @@ export interface CodictateCompatibleResults {
     normalization: "whisper-basic";
     /**
      * How long the harness required the pasted text to hold still before calling it
-     * stable. Published because `meanStopToStableTextMs` includes it: without the
-     * window beside the measurement, a consumer would have to know the number by
-     * heart to read the measurement correctly.
+     * stable. A condition of the run: it is the harness's own wait, it sits on top of
+     * whatever the product's real settling time is, and it is part of `totalWallSec`.
      */
     stableMs: number;
+    /**
+     * How often the bridge re-read the receiver window while waiting for text, and so
+     * the granularity of the per-clip latencies in `results.json`. Absent on runs
+     * recorded before the interval was configurable, which used a hardcoded 50ms.
+     */
+    pollIntervalMs?: number;
   };
   librispeech: DatasetResults;
   fleurs: DatasetResults;
@@ -238,6 +195,9 @@ export function buildCodictateResults(run: CompatibleRun): CodictateCompatibleRe
       warmupCount: 3,
       normalization: "whisper-basic",
       stableMs: run.config.stableMs,
+      ...(run.config.pollIntervalMs !== undefined
+        ? { pollIntervalMs: run.config.pollIntervalMs }
+        : {}),
     },
     librispeech,
     fleurs,
@@ -305,9 +265,6 @@ function modelResult(
         }
       : {}),
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
-    ...meanLatency("meanStopToFirstTextMs", scored, (sample) => sample.stopToFirstTextMs),
-    ...meanLatency("meanStopToStableTextMs", scored, (sample) => sample.stopToStableTextMs),
-    ...responseRate(scored),
     peakRSS_MB: null,
     utteranceCount: partial.utterancesDone,
     failures: failed.length,
@@ -317,56 +274,6 @@ function modelResult(
     },
     totalAudioSec: partial.totalAudioSec,
     totalWallSec: partial.totalWallSec,
-  };
-}
-
-/**
- * One latency mean, under the given name, over the clips that recorded one.
- *
- * A clip the product returned nothing for records `null`, and the denominator is the
- * clips that measured something rather than every scored clip: counting a null as 0
- * would pull the mean towards "instant" in exactly the runs where the product was
- * slowest. Yields `{}` when nothing measured, so the key is absent rather than 0.
- */
-function meanLatency<K extends string>(
-  key: K,
-  scored: CompatibleSample[],
-  select: (sample: CompatibleSample) => number | null,
-): Partial<Record<K, number>> {
-  const measured = scored
-    .map(select)
-    .filter((value): value is number => value !== null);
-  if (measured.length === 0) return {};
-  return { [key]: sum(measured, (value) => value) / measured.length } as Record<K, number>;
-}
-
-/**
- * The response-time ratio and the two sums it came from, over the scored clips that got
- * text back.
- *
- * One filter drives both sides on purpose. A clip with no `stopToFirstTextMs` contributes
- * neither its (absent) latency nor its audio, because leaving its audio in the denominator
- * is arithmetically the same as claiming the product answered it instantly.
- *
- * Yields `{}` when no clip answered, so all three keys are absent together rather than
- * publishing a 0 ms/s that would read as instant, and rather than a 0/0 NaN.
- */
-function responseRate(
-  scored: CompatibleSample[],
-): Partial<
-  Pick<
-    CodictateModelDatasetResult,
-    "responseMsPerAudioSec" | "totalStopToFirstTextMs" | "respondedAudioSec"
-  >
-> {
-  const responded = scored.filter((sample) => sample.stopToFirstTextMs !== null);
-  const totalStopToFirstTextMs = sum(responded, (sample) => sample.stopToFirstTextMs!);
-  const respondedAudioSec = sum(responded, (sample) => sample.audioDurationSec);
-  if (responded.length === 0 || respondedAudioSec === 0) return {};
-  return {
-    responseMsPerAudioSec: totalStopToFirstTextMs / respondedAudioSec,
-    totalStopToFirstTextMs,
-    respondedAudioSec,
   };
 }
 
