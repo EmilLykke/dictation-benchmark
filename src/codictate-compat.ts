@@ -1,3 +1,12 @@
+import {
+  assertV2OnV1Leaf,
+  clipIdFromRelativeAudioPath,
+  INSTRUMENTATION_ASYMMETRY_LABEL,
+  pooledInferenceRtf,
+  pooledSpeed,
+  type LeafSpeedV2,
+  type SampleMeasurementV2,
+} from "./contract";
 import type { DatasetId, ProductMetadata } from "./types";
 import type { CerResult, WerResult } from "./scoring";
 
@@ -16,11 +25,35 @@ export interface CompatibleSample {
   wallClockMs?: number;
   audioPlaybackMs: number;
   /**
-   * Kept only because `sampleWallMs` falls back to it for runs written before
-   * `wallClockMs` existed. Deliberately not aggregated: see the note on this
-   * file's removed latency fields.
+   * Stop edge to *confirmed-stable* text. **Includes the 750 ms stability delay** plus
+   * up to one poll of noticing it, so it is not a response time and is never
+   * substituted for one.
+   *
+   * Read for two things and nothing else: `sampleWallMs` falls back to it for runs
+   * written before `wallClockMs` existed, and `responseMsOf` falls back to it so a
+   * pre-2026-09-04 clip still has *a* readable number. That fallback cannot leak into
+   * a published figure, because such a clip carries no timing provenance and
+   * `speedCompatible` therefore keeps it out of the pooled ratio.
    */
   stopToStableTextMs: number | null;
+  /**
+   * **The response metric.** Stop Z-keydown edge to the last actual pasted-text
+   * change. See `TranscriptionResult.stopToLastTextChangeMs`.
+   *
+   * Optional because runs recorded before 2026-09-04 have none.
+   */
+  stopToLastTextChangeMs?: number | null;
+  /** Provenance: `"monotonic"` for a post-fix clip, absent for a pre-fix one. */
+  timingClock?: string | null;
+  /** Provenance: `"keydown"` for a post-fix clip, absent for a pre-fix one. */
+  hotkeyEdge?: string | null;
+  /** Canonical clip identity, when the record carries it. */
+  clipId?: string;
+  /**
+   * The record's portable audio path, which *is* the canonical clipId string for every
+   * committed run. Read only as the `clipId` fallback for older records.
+   */
+  audioPath?: string;
   wer: WerResult;
   cer?: CerResult;
 }
@@ -81,30 +114,76 @@ export interface CodictateModelDatasetResult {
    * external-product leaf can be built without one.
    */
   referenceWords: number;
+  /**
+   * **Required on a v2 leaf**, and a parity fix rather than a preference.
+   *
+   * Codictate wrote it and this harness did not, so `charts.py::_leaf_word_errors` used
+   * an exact integer for one product and a derived float (`wer * referenceWords`) for
+   * the other - two numerators of different kinds pooled into one published rate, with
+   * float error accumulating on only one side of the comparison.
+   */
+  wordErrors: number;
   cer?: number;
   /** Reference characters the CER was divided by. Absent wherever `cer` is absent. */
   referenceChars?: number;
-  meanRTF: number;
-  /*
-   * No latency or response-speed aggregate is published here, on purpose.
+  /** Character-level edit distance. Present exactly where `cer` is. */
+  charErrors?: number;
+  /**
+   * **Legacy, and unfiltered.** Session wall clock over audio, over **all** scored
+   * samples - `speedCompatible` is not applied to it.
    *
-   * This leaf used to carry `meanStopToFirstTextMs`, `meanStopToStableTextMs`,
-   * `responseMsPerAudioSec`, `totalStopToFirstTextMs` and `respondedAudioSec`. Every
-   * one of them was a sum or a mean of the per-clip `stopToFirstTextMs` that the
-   * bridge recorded with its own output-device restore inside the measured window:
-   * a synchronous Core Audio call, roughly 300ms, charged to the product on every
-   * clip. It showed up as a floor of about 317ms that was flat against clip length,
-   * and it was the whole of the fixed term in the fast datasets. Pooled, it moved
-   * the published figure from 123 ms per audio second to 91 to 96, which reverses
-   * the ordering against `large-v3-q5_0` at 99.
+   * `meanRTF`, `totalWallSec` and `totalAudioSec` keep their v1 meaning exactly,
+   * because the archived leaves were computed this way and redefining them would make
+   * every new run incomparable to the archive it is published beside - silently, since
+   * the field name would not change. It is floored at 1.0 by playback this harness chose
+   * to do, and `sampleWallMs` includes `leadMs`, `tailMs` and the 750 ms stability wait,
+   * so it is not a response time and never stands in for one.
    *
-   * `main.swift` no longer restores the device inside the window and now records
-   * both `stopToFirstTextHarnessMs` and `outputDeviceRestoreMs` per clip, so a
-   * future run can publish a speed figure and say what its own overhead was. This
-   * transform stays silent about speed until such a run exists, because a consumer
-   * cannot tell a clean aggregate from a contaminated one by looking at it. The raw
-   * per-clip numbers stay in `results.json`, where they are what they say they are.
+   * All provenance-filtered v2 speed lives under `speedV2` and nowhere else. The two
+   * deliberately differ on a run with excluded clips, and
+   * `src/contract/v1-leaf.ts::publishableWallRtf` is the function that refuses to fall
+   * back from one to the other.
    */
+  meanRTF: number;
+  /**
+   * The v2 response-speed summary for this dataset. **Pooled, and provenance-gated.**
+   *
+   * The field is **`speedV2`**, from `src/contract/v1-leaf.ts::LEAF_SPEED_V2_FIELD`, and
+   * the name is load-bearing rather than cosmetic. It was written here as `speed` while
+   * Codictate wrote `speedV2` and `charts.py` read `speedV2`, so every external row
+   * found nothing and fell through to a `meanRTF` fallback - a differently defined,
+   * unfiltered, playback-floored number rendered in a v2 chart at up to 28x the
+   * contract value. A bare `speed` also invites a reader to treat it as a v1 field and
+   * leaves a v3 nowhere to go.
+   *
+   * The flat `meanStopToFirstTextMs`, `meanStopToStableTextMs`,
+   * `responseMsPerAudioSec`, `totalStopToFirstTextMs` and `respondedAudioSec` fields
+   * this leaf once carried are gone and are not coming back, and nothing here is a
+   * rename of one of them. Each of those was a sum or a mean over per-clip
+   * `stopToFirstTextMs` values the bridge recorded with its own Core Audio
+   * output-device restore inside the measured window: a synchronous call, roughly
+   * 300 ms, charged to the product on every clip. It showed up as a floor of about
+   * 317 ms flat against clip length, and pooled it moved the published figure from
+   * 123 ms per audio second to 91-96 - which reverses the ordering against
+   * `large-v3-q5_0` at 99. Publishing that was the defect; withholding every figure
+   * for ever was the stopgap.
+   *
+   * What replaces the stopgap is a **filter with a stated count** rather than
+   * silence. The restore is now outside the window and both hotkey edges are stamped
+   * at the Z keydown transition, so a clip measured after 2026-09-04 records
+   * `timingClock: "monotonic"` and `hotkeyEdge: "keydown"` and may be pooled.
+   * `src/contract/timing.ts::speedCompatible` excludes every clip that cannot prove
+   * both, and `speed.speedExcludedCount` says how many it excluded - so a leaf built
+   * entirely from pre-fix clips reads `responseMsPerAudioSec: null` beside the count
+   * that explains the null, instead of a field a consumer cannot tell from a clean
+   * one. That is the case for every dataset in
+   * `results/20260902_181511_wispr-flow-all-400`, and
+   * `tests/compat-speed.test.ts` pins it.
+   *
+   * The raw per-clip numbers stay in `results.json`, where they are labelled as what
+   * they are.
+   */
+  speedV2: LeafSpeedV2;
   peakRSS_MB: null;
   utteranceCount: number;
   /**
@@ -140,6 +219,15 @@ type DatasetResults = Record<string, HarnessResults>;
 
 export interface CodictateCompatibleResults {
   description: string;
+  /**
+   * The one sentence every surface showing both products must print, verbatim.
+   *
+   * Read from `src/contract/timing.ts::INSTRUMENTATION_ASYMMETRY_LABEL` rather than
+   * written out here, because the report, the chart subtitles and the staging reader
+   * all have to say the same thing and three paraphrases is how a reader ends up
+   * believing the two numbers are the same measurement. SPEC §5, addendum §J.
+   */
+  instrumentationNote: string;
   hardware: {
     chip: string;
     ram: string;
@@ -198,6 +286,7 @@ export function buildCodictateResults(run: CompatibleRun): CodictateCompatibleRe
       `${run.product.label} ${run.product.version ?? "unknown"} external-product benchmark`,
       run.config.configurationNote,
     ].filter(Boolean).join("; "),
+    instrumentationNote: INSTRUMENTATION_ASYMMETRY_LABEL,
     hardware: {
       chip: run.hardware.cpu,
       ram: run.hardware.ram ?? "unknown",
@@ -303,16 +392,22 @@ function modelResult(
   const partial = partialProgress(samples, config);
   const scored = scoredSamples(samples);
   const failed = scored.filter((sample) => sample.status !== "ok");
-  return {
+  const leaves = samples.map(speedLeaf);
+  const leaf: CodictateModelDatasetResult = {
     wer: partial.totalRefWords === 0 ? 0 : partial.totalWer / partial.totalRefWords,
     referenceWords: partial.totalRefWords,
+    wordErrors: partial.totalWer,
     ...(partial.totalCer !== undefined && partial.totalRefChars
       ? {
           cer: partial.totalCer / partial.totalRefChars,
           referenceChars: partial.totalRefChars,
+          charErrors: partial.totalCer,
         }
       : {}),
+    // Unfiltered, over every scored sample, exactly as v1 computed it. See the note on
+    // the field.
     meanRTF: partial.totalAudioSec === 0 ? 0 : partial.totalWallSec / partial.totalAudioSec,
+    speedV2: speedV2For(leaves),
     peakRSS_MB: null,
     utteranceCount: partial.utterancesDone,
     failures: failed.length,
@@ -322,6 +417,34 @@ function modelResult(
     },
     totalAudioSec: partial.totalAudioSec,
     totalWallSec: partial.totalWallSec,
+  };
+  // Checked against the shared shape rather than trusted. Every complaint this catches
+  // is a consumer that would otherwise get a different number from the two harnesses -
+  // a summary under the wrong key, a rate that disagrees with its own counts, a CER
+  // present without its denominator.
+  assertV2OnV1Leaf(leaf, { pooledRunCount: 1 });
+  return leaf;
+}
+
+/**
+ * The pooled v2 speed summary plus the Codictate-only inference diagnostic.
+ *
+ * The diagnostic is emitted with its counts even though this harness can never populate
+ * `overhead.inferenceMs` - a UI-observed paste has no inference boundary to measure - so
+ * `inferenceRtf` is always `null` and `inferenceSkippedCount` equals the scored count.
+ * Emitted rather than omitted because the shared leaf shape requires the fields, and a
+ * `null` rate beside a skip count is readable as "not measurable here" where an absent
+ * field would be indistinguishable from "not recorded".
+ */
+function speedV2For(leaves: readonly SampleMeasurementV2[]): LeafSpeedV2 {
+  const inference = pooledInferenceRtf(leaves);
+  return {
+    ...pooledSpeed(leaves),
+    inferenceRtf: inference.rtf,
+    inferenceMs: inference.inferenceMs,
+    inferenceAudioSec: inference.audioDurationSec,
+    inferenceSampleCount: inference.leafCount,
+    inferenceSkippedCount: inference.skippedCount,
   };
 }
 
@@ -362,10 +485,85 @@ function sampleWallMs(
   config: CompatibleRun["config"],
 ): number {
   if (sample.wallClockMs !== undefined) return sample.wallClockMs;
+  // Reconstructing a wall time for a record written before `wallClockMs` existed. The
+  // response metric is preferred; `stopToStableTextMs` is the legacy fallback and it
+  // carries the 750 ms stability delay, which for *this* purpose is right - the harness
+  // really did wait it, and it really was part of the session's wall clock. It is only
+  // wrong as a response time, which is why `responseMsOf` below prefers the same field
+  // in the same order and the pooled ratio then refuses the fallback outright.
   return sample.audioPlaybackMs
     + config.leadMs
     + config.tailMs
-    + (sample.stopToStableTextMs ?? 0);
+    + (sample.stopToLastTextChangeMs ?? sample.stopToStableTextMs ?? 0);
+}
+
+/**
+ * The response time of one clip, preferring the metric over the legacy number.
+ *
+ * `stopToLastTextChangeMs` is the stop Z-keydown edge to the last actual pasted-text
+ * change. `stopToStableTextMs` is that plus the 750 ms confirmation plus up to one
+ * poll, so it is not a response time; it is here so a pre-2026-09-04 clip still reads
+ * as *something* rather than as a null that looks like a failure. Such a clip has no
+ * `timingClock`/`hotkeyEdge`, so `speedCompatible` keeps it out of the pooled ratio and
+ * the fallback cannot reach a published number.
+ */
+function responseMsOf(sample: CompatibleSample): number | null {
+  return sample.stopToLastTextChangeMs ?? sample.stopToStableTextMs ?? null;
+}
+
+/**
+ * One clip as the contract's pooling code wants it.
+ *
+ * `timingRegime` is `ui-observed-paste` unconditionally, because that is what this
+ * harness is: it presses a global shortcut and watches an `NSTextView`. The two
+ * provenance stamps are passed through **as recorded and never defaulted** - a
+ * `hotkeyEdge: "keydown"` invented here to satisfy a type would tell
+ * `speedCompatible` that a pre-fix clip was measured properly, which is the one lie
+ * this whole filter exists to prevent.
+ */
+/**
+ * The canonical clipId of a compatible sample, or a throw.
+ *
+ * Never a placeholder. `?? "unknown"` collapsed every sample in a record with no
+ * `audioPath` to one id, so `pooledSampleCount` reported **1** for a 400-clip dataset and
+ * the leaf published a sample count two orders of magnitude wrong. SPEC addendum §K is
+ * the rule: an identity conversion throws where `portableAudioPath` falls back, because
+ * the fallback is right for a portable record and catastrophic as identity.
+ *
+ * `audioPath` on a committed record is already the canonical string, so this re-derives
+ * rather than guesses - and the derivation is the throwing one.
+ */
+function compatibleClipId(sample: CompatibleSample): string {
+  if (sample.clipId) return sample.clipId;
+  if (sample.audioPath) return clipIdFromRelativeAudioPath(sample.audioPath);
+  throw new Error(
+    `A scored sample carries neither clipId nor audioPath, so it has no identity and cannot ` +
+      `be counted. Every record this harness has ever written carries a portable audioPath; ` +
+      `a sample without one was hand-edited or produced by something else.`,
+  );
+}
+
+function speedLeaf(sample: CompatibleSample): SampleMeasurementV2 {
+  const errors = sample.wer.substitutions + sample.wer.insertions + sample.wer.deletions;
+  const characterErrors = sample.cer
+    ? sample.cer.substitutions + sample.cer.insertions + sample.cer.deletions
+    : 0;
+  return {
+    clipId: compatibleClipId(sample),
+    audioDurationSec: sample.audioDurationSec,
+    responseMs: responseMsOf(sample),
+    status: sample.status,
+    wordErrors: errors,
+    referenceWords: sample.wer.refWords,
+    charErrors: characterErrors,
+    referenceChars: sample.cer?.refChars ?? 0,
+    isWarmup: sample.warmup,
+    overhead: {
+      timingRegime: "ui-observed-paste",
+      ...(sample.hotkeyEdge == null ? {} : { hotkeyEdge: sample.hotkeyEdge }),
+      ...(sample.timingClock == null ? {} : { timingClock: sample.timingClock }),
+    },
+  };
 }
 
 function datasetType(dataset: DatasetId): "librispeech" | "fleurs" {

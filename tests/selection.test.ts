@@ -29,6 +29,9 @@ afterEach(() => {
 function manifest(count: number, prefix = "clip"): ManifestEntry[] {
   return Array.from({ length: count }, (_unused, index) => ({
     id: `${prefix}-${index}`,
+    // Distinct per entry, like the real corpus. The v1 `id` above is what the v1
+    // fingerprint is taken over; `clipId` is what identity, dedup and pooling use.
+    clipId: `librispeech/wav/test-clean/${prefix}-${index}.wav`,
     audioPath: `/tmp/${prefix}-${index}.wav`,
     transcript: "reference",
     language: "en",
@@ -45,6 +48,13 @@ function resultsTree(
     runId: string;
     productId?: string;
     productVersion?: string | null;
+    /**
+     * Defect 3: only a completed run feeds the cursor, so these fixtures say so. The
+     * runner writes `"running"` while it works and `"completed"` at the end, and a
+     * record with no status at all reads as incomplete — see
+     * `tests/v2-selection.test.ts`, which covers both of those cases directly.
+     */
+    status?: "running" | "completed";
     datasets: Record<string, Partial<DatasetSelection> & { manifestFingerprint: string; endIndex: number }>;
   }>,
 ): string {
@@ -61,6 +71,7 @@ function resultsTree(
       join(runDir, "results.json"),
       JSON.stringify({
         runId: run.runId,
+        status: run.status ?? "completed",
         product: {
           id: run.productId ?? "wispr-flow",
           label: "Wispr Flow",
@@ -290,9 +301,14 @@ describe("--from is an explicit start index", () => {
 
     expect(plan.rewind).toBe(false);
     expect(plan.gap).toBe(true);
+    // This line used to end "cursor ends at 600", which was defect 12 stated out loud:
+    // clips 398-500 are not measured, so a cursor of 600 is a claim about clips nobody
+    // has heard. The GAP voice is unchanged; the number is now the contiguous prefix,
+    // and the gap-inclusive end is printed beside it under its own name.
     expect(formatPlanLine(plan)).toBe(
       "hu_hu: GAP --from 500 starts past cursor 397 (clips 501-600 of 902 consumable, " +
-        "leaving clips 398-500 unmeasured; cursor ends at 600)",
+        "leaving clips 398-500 unmeasured; cursor ends at 397, unmoved because the prefix " +
+        "stops at the hole; maxMeasuredEnd 600, not contiguous and not a depth)",
     );
   });
 

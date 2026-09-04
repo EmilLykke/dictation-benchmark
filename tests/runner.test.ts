@@ -227,6 +227,7 @@ const CONFIG: RunConfig = {
 function entry(audioDurationSec: number): ManifestEntry {
   return {
     id: `clip-${audioDurationSec}`,
+    clipId: `librispeech/wav/test-clean/clip-${audioDurationSec}.wav`,
     audioPath: `/tmp/clip-${audioDurationSec}.wav`,
     transcript: "reference",
     language: "en",

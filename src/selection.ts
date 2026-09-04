@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  fingerprintV2Record,
+  isRunStatus,
+  type FingerprintV2,
+  type IncompleteRunRef,
+  type RunStatus,
+} from "./contract";
 import type { ManifestEntry } from "./types";
 
 /**
@@ -29,8 +36,16 @@ export const CURSOR_CACHE_FILE = ".selection-cache.json";
  * and none is kept.
  */
 export interface DatasetSelection {
-  /** Shape tag, so a later change to these semantics is detectable rather than silent. */
-  selectionVersion: 1;
+  /**
+   * Shape tag, so a later change to these semantics is detectable rather than silent.
+   *
+   * `1` is the shape written before the cursor was made contiguous: `endIndex` alone,
+   * with no way to tell a run that measured `[0, 400)` from one that measured
+   * `[600, 900)` and left a hole. `2` adds `contiguousEndIndex`,
+   * `maxMeasuredEndIndex`, `priorCursor` and `clipFingerprintV2`. Records of both
+   * shapes are read; only `2` is written.
+   */
+  selectionVersion: 1 | 2;
   /** Reserved warmup entries at the head of the manifest. Outside every range below. */
   warmupCount: number;
   /** See `manifestFingerprint`. Guards every offset in this record. */
@@ -47,6 +62,58 @@ export interface DatasetSelection {
    * that died halfway advances the cursor by exactly the clips it finished.
    */
   endIndex: number;
+  /**
+   * The **production cursor** this run leaves behind: the contiguous measured prefix.
+   *
+   * This — not `endIndex` — is what `deriveCursors` maxes over, and the difference is
+   * defect 12. `endIndex` is where this run's own range reached; a run started past
+   * the cursor with `--from` reaches a high `endIndex` over clips that are only
+   * measured from `startIndex` on, and `max(cursor, endIndex)` then declared the hole
+   * measured. A depth is only publishable if every clip below it has been
+   * transcribed, so a gap holds the cursor at where the contiguity actually stops.
+   *
+   * Absent on `selectionVersion: 1` records, where `endIndex` is read instead. That
+   * fallback is exact for the committed archive rather than approximate: every run in
+   * `results/` recorded `startIndex: 0`, so its `endIndex` *is* its contiguous prefix.
+   *
+   * Mirrors `src/contract/selection.ts::contiguousCursor`.
+   */
+  contiguousEndIndex: number;
+  /**
+   * One past the deepest clip measured, **gaps included. Not a cursor.**
+   *
+   * Kept beside `contiguousEndIndex` and labelled non-contiguous because the two
+   * disagreeing is the useful signal: `397` against `900` says three hundred clips are
+   * missing from the middle of a range that claims to reach 900. It is a diagnostic for
+   * the preview and for coverage, and it never feeds a cursor, an aggregate or a
+   * published depth.
+   *
+   * Mirrors `src/contract/selection.ts::maxMeasuredEnd`.
+   */
+  maxMeasuredEndIndex: number;
+  /**
+   * The cursor this run started from, recorded so a reader can tell a continuation
+   * from a rewind from a gap without re-deriving anything.
+   */
+  priorCursor: number;
+  /**
+   * The v2 fingerprint of this run's **selected scored clipIds**, warmups excluded.
+   *
+   * The cross-repository equality token: two runs measured the same clips in the same
+   * order exactly when these two values match (SPEC §2). Stored in the shape both
+   * repositories write — the field name `clipFingerprintV2` *and* the embedded
+   * `version` — because a bare 16-hex string travels detached from its record and
+   * carries no clue which algorithm produced it (addendum §A).
+   *
+   * **Never comparable with `manifestFingerprint` above.** That one is
+   * `sha256:<hex>` over the dataset's whole ordered pool *including* the reserved
+   * warmups, and it answers "do my stored integer offsets still index into this list".
+   * This one is over the clips one run measured, warmups excluded (addendum §F), and
+   * answers "did these two runs measure the same clips". Opposite conventions on
+   * warmups, different questions, different field names, never migrated into one
+   * another.
+   */
+  clipFingerprintV2: FingerprintV2;
   /** Half-open end this run intends to reach. `--resume` continues towards it. */
   plannedEndIndex: number;
   /** Depth the operator asked for, before exhaustion truncated it. */
@@ -65,7 +132,39 @@ export interface RunSelectionRecord {
    * a per-version cursor would reset every few days and never accumulate.
    */
   productVersion: string | null;
-  datasets: Record<string, { manifestFingerprint: string; endIndex: number }>;
+  /**
+   * Whether the process that wrote this record finished the plan it was given.
+   *
+   * **Only `completed` records feed the production cursor**, aggregation, coverage,
+   * staging or publication (defect 3). An `incomplete` record is a resume source and
+   * an overlap check input, and nothing else: an unfinished run has not been checked
+   * against its plan, and counting its depth means the *next* run starts past clips
+   * the interrupted one never reached — then resuming the interrupted one overlaps the
+   * new one and two processes write two measurements of the same clip.
+   *
+   * Explicit rather than inferred from "does it have as many samples as it planned",
+   * because the two answers differ in the case that matters: a run killed after its
+   * last clip but before its footer has every sample and is still not a completed run.
+   * A record with no status at all is read as `incomplete`, deliberately — see
+   * `readRunSelections`.
+   */
+  status: RunStatus;
+  datasets: Record<
+    string,
+    {
+      manifestFingerprint: string;
+      /** This run's own range end. Not the cursor. */
+      endIndex: number;
+      /** The contiguous prefix, which is the cursor. `endIndex` for a v1 record. */
+      contiguousEndIndex: number;
+      /** Gap-inclusive end. Diagnostic only. */
+      maxMeasuredEndIndex: number;
+      /** First consumable index this run measured, when it recorded one. */
+      startIndex: number;
+      /** Half-open end the run intended to reach, when it recorded one. */
+      plannedEndIndex: number;
+    }
+  >;
 }
 
 export interface FingerprintConflict {
@@ -200,13 +299,24 @@ export interface DatasetPlan {
    */
   gap: boolean;
   /**
-   * The cursor this run leaves behind, `max(cursor, endIndex)`.
+   * The cursor this run leaves behind: the **contiguous** measured prefix.
    *
-   * The cursor is the maximum recorded `endIndex` across runs (see `deriveCursors`),
-   * so a rewind can only ever raise it or leave it alone. Precomputed here so the
-   * preview can promise that in the same line that announces the rewind.
+   * `max(cursor, endIndex)` for a run that starts at or below the cursor, and simply
+   * `cursor` for a gap — because a gap leaves `[cursor, startIndex)` untranscribed, and
+   * a prefix with a hole in it is not a prefix. That distinction is defect 12: with
+   * `max` alone, `--from 600` on a 397 cursor recorded a cursor of 900 and the next run
+   * started at 900, so clips 398-600 were skipped for ever and no published number
+   * showed it.
+   *
+   * A rewind can still only raise the cursor or leave it alone, which is what the
+   * preview promises in the same line that announces the rewind.
    */
   cursorAfter: number;
+  /**
+   * One past the deepest clip this run will have measured, gaps included. **Not a
+   * cursor.** See `DatasetSelection.maxMeasuredEndIndex`.
+   */
+  maxMeasuredEndAfter: number;
   /** Replayed unscored at the start of the dataset. Always the same three clips. */
   warmups: ManifestEntry[];
   /** The consumable slice `[startIndex, endIndex)`. Empty means "nothing to do". */
@@ -246,7 +356,10 @@ export function planDataset(
     truncated: requestedEndIndex > consumableCount,
     rewind: fromIndex !== undefined && start < cursor,
     gap: fromIndex !== undefined && start > cursor,
-    cursorAfter: Math.max(cursor, endIndex),
+    // Contiguity, not depth. A run that starts past the cursor cannot extend the
+    // prefix, however deep it reaches. See `DatasetPlan.cursorAfter`.
+    cursorAfter: start > cursor ? cursor : Math.max(cursor, endIndex),
+    maxMeasuredEndAfter: Math.max(cursor, endIndex),
     warmups: warmupEntries(entries),
     clips: consumable.slice(start, endIndex),
   };
@@ -308,21 +421,44 @@ export function resumePlan(
     truncated: selection.truncated,
     rewind: false,
     gap: false,
-    cursorAfter: Math.max(selection.startIndex, selection.plannedEndIndex),
+    // The run recorded its own contiguous prefix; a resume inherits it rather than
+    // re-deriving one from `startIndex`, which for a gap run is past the prefix.
+    cursorAfter: selection.contiguousEndIndex ?? selection.startIndex,
+    maxMeasuredEndAfter: Math.max(
+      selection.maxMeasuredEndIndex ?? 0,
+      selection.plannedEndIndex,
+    ),
     warmups: warmupEntries(entries),
     clips: consumable.slice(selection.startIndex, selection.plannedEndIndex),
   };
 }
 
+/**
+ * The record one dataset of one run writes, given how many of its planned clips are
+ * captured.
+ *
+ * `measured` is the contiguous prefix of *this run's own range* that is captured
+ * (`measuredPrefix` in `src/runner.ts`), so `endIndex` is the depth this run reached.
+ * The two v2 numbers beside it are what a reader may and may not treat as a depth:
+ * `contiguousEndIndex` is the cursor and never crosses a hole, `maxMeasuredEndIndex`
+ * is the gap-inclusive end and is a diagnostic.
+ */
 export function selectionFor(plan: DatasetPlan, measured: number): DatasetSelection {
+  const endIndex = plan.startIndex + measured;
   return {
-    selectionVersion: 1,
+    selectionVersion: 2,
     warmupCount: WARMUP_COUNT,
     manifestFingerprint: plan.manifestFingerprint,
     manifestEntryCount: plan.manifestEntryCount,
     consumableCount: plan.consumableCount,
     startIndex: plan.startIndex,
-    endIndex: plan.startIndex + measured,
+    endIndex,
+    // Only a run that starts at or below the cursor can extend the prefix.
+    contiguousEndIndex: plan.startIndex > plan.cursor ? plan.cursor : Math.max(plan.cursor, endIndex),
+    maxMeasuredEndIndex: Math.max(plan.cursor, endIndex),
+    priorCursor: plan.cursor,
+    // The selected scored clips, warmups excluded (SPEC addendum §F).
+    clipFingerprintV2: fingerprintV2Record(plan.clips.map((entry) => entry.clipId)),
     plannedEndIndex: plan.endIndex,
     requestedEndIndex: plan.requestedEndIndex,
     truncated: plan.truncated,
@@ -368,7 +504,8 @@ export function formatPlanLine(plan: DatasetPlan): string {
     line =
       `${plan.dataset}: GAP --from ${plan.fromIndex} starts past cursor ${plan.cursor}` +
       ` (${clips}, leaving clips ${plan.cursor + 1}-${plan.startIndex} unmeasured;` +
-      ` cursor ends at ${plan.cursorAfter})`;
+      ` cursor ends at ${plan.cursorAfter}, unmoved because the prefix stops at the hole;` +
+      ` maxMeasuredEnd ${plan.maxMeasuredEndAfter}, not contiguous and not a depth)`;
   } else {
     line =
       `${plan.dataset}: cursor ${plan.cursor} -> ${plan.endIndex}` +
@@ -385,6 +522,16 @@ export function formatPlanLine(plan: DatasetPlan): string {
  * Returns `null` for anything that is not a readable run record, and simply omits
  * datasets with no selection record — runs made before this scheme existed
  * contribute nothing to a cursor unless they were backfilled.
+ *
+ * The run's status is mapped rather than trusted verbatim. The runner writes the v1
+ * vocabulary (`"running"` while it works, `"completed"` at the end); the contract's is
+ * `"incomplete" | "completed"`, so `"running"` maps to `"incomplete"` and both
+ * spellings of `"completed"` are accepted. **Anything else, including a missing field,
+ * reads as `incomplete`** — the conservative direction. A record whose status cannot
+ * be established has not been checked against its plan, and the cost of the two
+ * mistakes is not symmetric: excluding a finished run costs a re-measurement of clips
+ * that are still in the corpus, while including an unfinished one advances a published
+ * depth over clips nobody transcribed.
  */
 export function readRunSelections(runDir: string, runId: string): RunSelectionRecord | null {
   const path = join(runDir, "results.json");
@@ -398,6 +545,7 @@ export function readRunSelections(runDir: string, runId: string): RunSelectionRe
   if (typeof parsed !== "object" || parsed === null) return null;
   const run = parsed as {
     runId?: unknown;
+    status?: unknown;
     product?: { id?: unknown; version?: unknown };
     results?: Record<string, { selection?: Partial<DatasetSelection> }>;
   };
@@ -409,17 +557,75 @@ export function readRunSelections(runDir: string, runId: string): RunSelectionRe
     if (!selection) continue;
     if (typeof selection.manifestFingerprint !== "string") continue;
     if (typeof selection.endIndex !== "number") continue;
+    const startIndex = typeof selection.startIndex === "number" ? selection.startIndex : 0;
     datasets[dataset] = {
       manifestFingerprint: selection.manifestFingerprint,
       endIndex: selection.endIndex,
+      // A `selectionVersion: 1` record has no contiguous end. Its `endIndex` is read
+      // instead, which is exact rather than approximate for the committed archive:
+      // every run in `results/` recorded `startIndex: 0`, so its range *is* a prefix.
+      contiguousEndIndex:
+        typeof selection.contiguousEndIndex === "number"
+          ? selection.contiguousEndIndex
+          : selection.endIndex,
+      maxMeasuredEndIndex:
+        typeof selection.maxMeasuredEndIndex === "number"
+          ? selection.maxMeasuredEndIndex
+          : selection.endIndex,
+      startIndex,
+      plannedEndIndex:
+        typeof selection.plannedEndIndex === "number"
+          ? selection.plannedEndIndex
+          : selection.endIndex,
     };
   }
   return {
     runId: typeof run.runId === "string" ? run.runId : runId,
     productId,
     productVersion: typeof run.product?.version === "string" ? run.product.version : null,
+    status: runStatusOf(run.status),
     datasets,
   };
+}
+
+/** The v1 runner's `"running" | "completed"` in the contract's vocabulary. */
+function runStatusOf(status: unknown): RunStatus {
+  if (status === "running") return "incomplete";
+  if (isRunStatus(status)) return status;
+  return "incomplete";
+}
+
+/**
+ * The unfinished runs that touched one dataset, as clip lists an overlap check can use.
+ *
+ * Index ranges are deliberately converted to clipIds here rather than compared as
+ * ranges: a range is only meaningful against one ordering of one dataset, and the clip
+ * set is the fact (`src/contract/selection.ts::overlaps`). The range converted is
+ * `[startIndex, plannedEndIndex)` — what the run *intends* to measure, not what it has
+ * measured so far — because a run that is still going will reach the rest of it, and
+ * blocking only on the finished part would let a second run start on the clips the
+ * first is about to reach.
+ */
+export function incompleteRunsFor(
+  records: readonly RunSelectionRecord[],
+  dataset: string,
+  entries: readonly ManifestEntry[],
+  options: { excludeRunId?: string } = {},
+): IncompleteRunRef[] {
+  const consumable = consumableEntries(entries);
+  const refs: IncompleteRunRef[] = [];
+  for (const record of records) {
+    if (record.status === "completed") continue;
+    if (record.runId === options.excludeRunId) continue;
+    const recorded = record.datasets[dataset];
+    if (!recorded) continue;
+    const orderedClipIds = consumable
+      .slice(recorded.startIndex, Math.max(recorded.plannedEndIndex, recorded.endIndex))
+      .map((entry) => entry.clipId);
+    if (orderedClipIds.length === 0) continue;
+    refs.push({ runId: record.runId, orderedClipIds });
+  }
+  return refs;
 }
 
 interface CacheEntry {
@@ -428,8 +634,16 @@ interface CacheEntry {
   record: RunSelectionRecord;
 }
 
+/**
+ * Version `2` because `RunSelectionRecord` gained `status` and the contiguous/max ends.
+ *
+ * Bumped rather than tolerated: a version-1 entry has no `status`, and a cache hit on
+ * one would have handed `deriveCursors` a record it then read as incomplete — a cursor
+ * that depended on whether the cache happened to be warm. A stale cache is discarded
+ * and re-derived from the runs, which is the source of truth anyway.
+ */
 interface CacheFile {
-  version: 1;
+  version: 2;
   runs: Record<string, CacheEntry>;
 }
 
@@ -446,7 +660,7 @@ export function scanRunRecords(
   options: { productId: string },
 ): RunSelectionRecord[] {
   const cache = readCache(join(resultsRoot, CURSOR_CACHE_FILE));
-  const next: CacheFile = { version: 1, runs: {} };
+  const next: CacheFile = { version: 2, runs: {} };
   const records: RunSelectionRecord[] = [];
   let changed = false;
 
@@ -480,11 +694,23 @@ export function scanRunRecords(
 }
 
 /**
- * Cursor per dataset: the deepest point any matching-fingerprint run reached.
+ * Cursor per dataset: the deepest **contiguous** prefix any matching-fingerprint
+ * **completed** run reached.
+ *
+ * Two rules that used to be missing, and the failure each one prevents:
+ *
+ * - **Completed runs only** (defect 3). An interrupted run's recorded depth used to
+ *   feed this max, so starting a second run after a partial one skipped ahead — and
+ *   then resuming the first overlapped the second, leaving two measurements of the
+ *   same clips and the tie to a timestamp.
+ * - **The contiguous prefix, not the range end** (defect 12). `--from` past the cursor
+ *   produced a high `endIndex` over a range with a hole below it, and maxing on
+ *   `endIndex` declared the hole measured.
  *
  * Throws `ManifestFingerprintMismatch` rather than returning a cursor whenever a run
  * that measured something recorded a different fingerprint for a dataset being asked
- * about.
+ * about. Incomplete runs are checked for that too: their offsets are about to be used
+ * by a resume, so a mismatch there is just as dangerous.
  */
 export function deriveCursors(
   records: readonly RunSelectionRecord[],
@@ -512,7 +738,8 @@ export function deriveCursors(
         }
         continue;
       }
-      cursors.set(dataset, Math.max(cursors.get(dataset) ?? 0, recorded.endIndex));
+      if (record.status !== "completed") continue;
+      cursors.set(dataset, Math.max(cursors.get(dataset) ?? 0, recorded.contiguousEndIndex));
     }
   }
 
@@ -529,13 +756,14 @@ function listRunDirs(resultsRoot: string): string[] {
 }
 
 function readCache(path: string): CacheFile {
-  if (!existsSync(path)) return { version: 1, runs: {} };
+  const empty: CacheFile = { version: 2, runs: {} };
+  if (!existsSync(path)) return empty;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as CacheFile;
-    if (parsed?.version !== 1 || typeof parsed.runs !== "object") return { version: 1, runs: {} };
+    if (parsed?.version !== 2 || typeof parsed.runs !== "object") return empty;
     return parsed;
   } catch {
-    return { version: 1, runs: {} };
+    return empty;
   }
 }
 

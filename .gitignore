@@ -3,3 +3,9 @@ native/.build/
 results/**/*.tmp
 results/.selection-cache.json
 .DS_Store
+# Smoke-chain output. Disposable rehearsal data: five clips per dataset, written by
+# `bun run benchmark:publication -- --smoke`. Git-ignored on purpose, and excluded from
+# the production cursor, aggregation, coverage, staging and publication by
+# `src/v2-record.ts::isSmokePath`. Letting it into a cursor would advance a published
+# depth by a rehearsal.
+results/smoke/

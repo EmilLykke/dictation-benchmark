@@ -1,5 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { arch, cpus, platform, release, totalmem } from "node:os";
 import {
   MINIMUM_VIRTUAL_MIC_FLOW_VERSION,
@@ -12,6 +23,7 @@ import {
   deriveCursors,
   formatPlanLine,
   fromIndexError,
+  incompleteRunsFor,
   ManifestFingerprintMismatch,
   manifestFingerprint,
   planDataset,
@@ -38,6 +50,23 @@ import {
   datasetsRoot,
   portableRun,
 } from "./portable-paths";
+import {
+  assertNoOverlappingIncompleteRun,
+  assertResumeFlags,
+  clipIdFromAbsoluteAudioPath,
+  clipIdFromRelativeAudioPath,
+  type RunPlan,
+  type SampleMeasurementV2,
+} from "./contract";
+import { runPlanForDatasetPlan, sessionSelection } from "./v2-plan";
+import { DEFAULT_FLOW_HOTKEY, parseHotkey } from "./publication-hotkey";
+import {
+  buildRunRecordV2,
+  planPath,
+  readRunPlan,
+  saveRunPlanOnce,
+  saveRunRecordV2,
+} from "./v2-record";
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 
@@ -50,10 +79,14 @@ const DEFAULT_SAMPLES = 20;
 /**
  * How often the bridge re-reads the receiver window while waiting for text.
  *
- * This is the granularity of `stopToFirstTextMs`: text that lands between two polls
- * is not seen until the later one, so the measurement carries a mean upward bias of
- * half an interval. It was 50ms and hardcoded in the bridge, worth a mean +25ms;
- * 10ms cuts that to +5ms while still sleeping between reads rather than spinning.
+ * Since 2026-09-04 this is a **fallback** granularity, not the granularity of the
+ * measurement. The bridge stamps text changes from
+ * `NSTextStorage.didProcessEditingNotification` on the receiver `NSTextView`, so on the
+ * event path the stamps carry no interval bias and the reply says `textChangeBiasMs: 0`.
+ * Polling remains the documented fallback and also governs how fast *stability* is
+ * declared; on that path the reply states the whole interval as its bias. It was 50ms
+ * and hardcoded in the bridge; 10ms is kept because it still bounds the fallback's
+ * worst case while sleeping between reads rather than spinning.
  */
 const DEFAULT_POLL_INTERVAL_MS = 10;
 
@@ -89,7 +122,26 @@ export interface RunConfig {
    */
   to?: number;
   deviceName: string;
-  hotkey: { keyCode: number; modifiers: ["option"] };
+  /**
+   * The dictation shortcut the bridge posts, as a virtual key code and its modifiers.
+   *
+   * Recorded on the run because it is a condition of the measurement and cannot be
+   * verified from this side: Wispr Flow exposes no supported automation API, so the
+   * operator sets its Hands-free shortcut by hand and passing the wrong one here does
+   * not error — it times out on every clip.
+   *
+   * **Option+Z, key code 6.** One default, here and in
+   * `src/publication-hotkey.ts::DEFAULT_FLOW_HOTKEY`: a second one would let a direct
+   * invocation of this runner post a shortcut Flow no longer listens on, and the result
+   * would be four hundred timeouts rather than an error.
+   *
+   * The runs under `results/` were measured with **Option+Space** (key code 49), which
+   * is one of the two reasons they are not v2-comparable — the other being the ~85 ms
+   * keydown-edge bias the bridge has since fixed. That is an archival fact about those
+   * records, not a value to keep a fallback for; `--flow-hotkey` is how a run states a
+   * different shortcut, and every run records what it used.
+   */
+  hotkey: { keyCode: number; modifiers: Array<"command" | "control" | "fn" | "option" | "shift"> };
   leadMs: number;
   tailMs: number;
   /**
@@ -108,6 +160,12 @@ export interface RunConfig {
    * files still parse, and read on resume when `timeoutMs` is absent.
    */
   timeoutBudgetMs?: number;
+  /**
+   * `--batch <id>`: the publication batch this run is a stage of, when it was launched
+   * by `src/publication.ts`. Recorded so a stage can be found again by batch rather
+   * than by directory listing. Absent for a hand-launched run.
+   */
+  batchId?: string;
   stableMs: number;
   /**
    * How often the bridge re-reads the receiver window while waiting for text, and so
@@ -122,8 +180,19 @@ export interface RunConfig {
   configurationNote: string;
 }
 
-interface SampleResult {
+export interface SampleResult {
+  /** The per-corpus display id. **Not identity** — see `ManifestEntry.id`. */
   id: string;
+  /**
+   * Canonical clip identity (`fleurs/da_dk/audio/test/<hash>.wav`).
+   *
+   * Optional on the type only because runs written before it existed have none; for
+   * those `sampleClipId` re-derives it from the record's own portable `audioPath`,
+   * which is already this exact string. Always written for new samples.
+   */
+  clipId?: string;
+  /** FLEURS TSV column 0. Metadata, and it repeats. Absent for LibriSpeech. */
+  sentenceId?: string;
   warmup: boolean;
   audioPath: string;
   audioDurationSec: number;
@@ -141,6 +210,29 @@ interface SampleResult {
   stopToFirstTextHarnessMs?: number | null;
   /** See `TranscriptionResult`. Measured, and outside the window above. */
   outputDeviceRestoreMs?: number | null;
+  /**
+   * **The response metric.** See `TranscriptionResult.stopToLastTextChangeMs`.
+   *
+   * Optional because samples recorded before 2026-09-04 have none. Where it is absent
+   * the only readable number is `stopToStableTextMs`, which carries the 750 ms
+   * stability delay, so such a sample is legacy for speed and
+   * `src/contract/timing.ts::speedCompatible` keeps it out of every pooled ratio.
+   */
+  stopToLastTextChangeMs?: number | null;
+  /** See `TranscriptionResult`. The confirmation delay, outside the window. */
+  stabilityDelayMs?: number | null;
+  /** See `TranscriptionResult`. `"event"` or the polling fallback. */
+  textChangeSource?: "event" | "poll" | null;
+  /** See `TranscriptionResult`. Text changes observed inside the window. */
+  textChangeCount?: number | null;
+  /** See `TranscriptionResult`. Stated bias: 0 on the event path, one poll otherwise. */
+  textChangeBiasMs?: number | null;
+  /** See `TranscriptionResult`. Proves lead + playback + tail precede the stop stamp. */
+  startToStopMs?: number | null;
+  /** See `TranscriptionResult`. Provenance for pooling. */
+  timingClock?: "monotonic" | null;
+  /** See `TranscriptionResult`. Provenance for pooling. */
+  hotkeyEdge?: "keydown" | null;
   diagnostic?: string;
 }
 
@@ -170,6 +262,20 @@ interface DatasetResult {
     referenceChars?: number;
     scoredSamples: number;
     failures: number;
+    /**
+     * Mean of `stopToLastTextChangeMs`, falling back to `stopToStableTextMs` for
+     * samples recorded before the bridge emitted it.
+     *
+     * A run-local diagnostic only. The published speed figure is the **pooled**
+     * `responseMsPerAudioSec` in `stt.json`, because a mean of per-clip numbers
+     * weights a 2-second clip the same as a 30-second one.
+     */
+    meanResponseMs: number | null;
+    /**
+     * Mean of `stopToStableTextMs`, which **includes** the 750 ms stability
+     * confirmation. Kept under its old name and its old meaning. **Not a response
+     * time**, and never a substitute for `meanResponseMs`.
+     */
     meanStopToStableTextMs: number | null;
   };
 }
@@ -197,6 +303,15 @@ interface BenchmarkRun {
 
 interface CliOptions {
   name?: string;
+  /**
+   * `--resume <runId|runDir>`: the run to continue, **named explicitly**.
+   *
+   * Never "the latest unfinished run". That search has a silent failure mode — it
+   * resumes the wrong run and files a partial numerator against clips it never saw —
+   * and the operator always knows which run they mean. A bare run id is resolved under
+   * the results root; a path is taken as given, so the shape the README has always
+   * documented still works.
+   */
   resume?: string;
   dryRun: boolean;
   /**
@@ -210,17 +325,33 @@ interface CliOptions {
    * file, which matters because `--from` and `--resume` are refused together.
    */
   from?: number;
+  /**
+   * `--out <dir>`: the results root this invocation reads its cursor from and writes
+   * its run directory into. Defaults to `results/`.
+   *
+   * The cursor is derived from the tree, so pointing a run at another tree is also how
+   * it is kept out of the production cursor: the orchestrator's smoke chain passes
+   * `--out results/smoke/<batch>`, and nothing under `results/smoke/` is ever scanned
+   * by a production read (`src/v2-record.ts::isSmokePath`).
+   *
+   * Deliberately **not** a selection-changing flag, so it is absent from
+   * `RESUME_FORBIDDEN_FLAGS`: it moves where a report is written, not what was
+   * measured.
+   */
+  out?: string;
   config: RunConfig;
 }
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const resultsRoot = resolve(import.meta.dir, "../results");
+  const resultsRoot = options.out
+    ? resolve(options.out)
+    : resolve(import.meta.dir, "../results");
   let run: BenchmarkRun;
   let runDir: string;
 
   if (options.resume) {
-    runDir = resolve(options.resume);
+    runDir = resolveRunDir(resultsRoot, options.resume);
     run = JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")) as BenchmarkRun;
     if (run.status === "completed") throw new Error(`Run already completed: ${runDir}`);
     run.config = withCodictatePath(
@@ -253,7 +384,9 @@ async function main(): Promise<void> {
     };
   }
 
-  const plans = buildPlan(run, resultsRoot, options.from);
+  const datasetsDirectory = datasetsRoot(run.config.codictatePath);
+  const manifests = new Map<DatasetId, ManifestEntry[]>();
+  const plans = buildPlan(run, resultsRoot, options.from, manifests);
   printPlan(run, runDir, plans, options.from);
   if (options.dryRun) return;
   if (plans.every((plan) => plan.clips.length === 0)) {
@@ -297,8 +430,37 @@ async function main(): Promise<void> {
         continue;
       }
       const result = (run.results[dataset] ??= { samples: [] });
+      // The immutable Run Plan, written before the first clip and re-read rather than
+      // re-derived on every later session. `saveRunPlanOnce` refuses to overwrite a
+      // plan with a different fingerprint, which is what stops the second invocation of
+      // `--samples 400` from meaning "another 400 clips" under the first 400's name.
+      const runPlan = saveRunPlanOnce(
+        runDir,
+        dataset,
+        runPlanForDatasetPlan(plan, manifests.get(dataset)!, {
+          runId: run.runId,
+          ...(run.config.batchId === undefined ? {} : { batchId: run.config.batchId }),
+          model: run.product.id,
+          createdAt: run.createdAt,
+        }),
+      );
       const entries = sessionEntries(plan);
-      const completed = new Set(result.samples.map((sample) => sample.id));
+      // Defect 1: this set used to be keyed on `sample.id`, which for FLEURS is the
+      // *sentence* id and repeats. Danish has 930 clips behind 350 distinct values, so
+      // two thirds of a Danish range looked like clips already captured and were
+      // skipped, while the recorded range still claimed the full depth: a 400-clip
+      // range resolved to 264 distinct audio files (measured; see
+      // `tests/fleurs-identity.manual.ts`). Keyed on `clipId` - the audio file's
+      // corpus-relative path - a 400-clip range invokes the adapter on 400 distinct
+      // files.
+      //
+      // The archived `20260902_181511_wispr-flow-all-400` is **not** an instance of the
+      // skip and must not be quoted as one: it predates intra-run deduplication and
+      // holds 400 samples with 400 distinct audio paths. It is evidence that the ids
+      // collide - 264 distinct across its 400 Danish samples - and nothing more.
+      const completed = new Set(
+        result.samples.map((sample) => sampleClipId(sample, datasetsDirectory)),
+      );
       if (!result.selection && result.samples.some((sample) => !sample.warmup)) {
         throw new Error(
           `${dataset} in ${runDir} holds scored samples but no recorded range, so this run ` +
@@ -307,8 +469,21 @@ async function main(): Promise<void> {
             `dataset and record a depth neither of them reached.`,
         );
       }
+      // The contract decides what this session plays. Three lists, not one, because
+      // the three have different rules and conflating them was defect 6.
+      const session = sessionSelection(runPlan, completed);
+      const remaining = new Set(session.remaining);
       result.selection = selectionFor(plan, measuredPrefix(plan, completed));
       saveRun(runDir, run);
+      saveV2(runDir, dataset, runPlan, run, result.samples, "incomplete", datasetsDirectory);
+      if (session.scoredToSkip.length > 0) {
+        console.log(
+          `\n[${dataset}] resuming: ${session.warmupsToReplay.length} warmup replays, ` +
+            `${session.scoredToSkip.length} scored clips already measured and skipped, ` +
+            `${session.remaining.length} left. A recorded failure or timeout counts as ` +
+            `measured and is not replayed.`,
+        );
+      }
       if (plan.truncated) {
         console.warn(
           `\n[${dataset}] EXHAUSTED: depth ${plan.requestedEndIndex} requested but only ` +
@@ -321,14 +496,13 @@ async function main(): Promise<void> {
           `consumable ${plan.startIndex + 1}-${plan.endIndex} of ${plan.consumableCount}`,
       );
 
-      for (let index = 0; index < entries.length; index++) {
-        const entry = entries[index];
-        if (completed.has(entry.id)) {
+      for (const slot of sessionPlaylist(entries, plan.warmups.length, remaining)) {
+        const { entry, index, warmup } = slot;
+        if (!slot.play) {
           console.log(`  ${index + 1}/${entries.length} ${entry.id} already captured`);
           continue;
         }
 
-        const warmup = index < WARMUP_COUNT;
         process.stdout.write(`  ${index + 1}/${entries.length} ${entry.id}${warmup ? " (warmup)" : ""} ... `);
         const startedAt = performance.now();
         const transcription = await adapter.transcribe(transcribeRequest(run.config, entry));
@@ -340,6 +514,8 @@ async function main(): Promise<void> {
           : computeCer(entry.rawTranscript, scoredHypothesis);
         result.samples.push({
           id: entry.id,
+          clipId: entry.clipId,
+          ...(entry.sentenceId === undefined ? {} : { sentenceId: entry.sentenceId }),
           warmup,
           audioPath: entry.audioPath,
           audioDurationSec: entry.audioDurationSec,
@@ -355,17 +531,37 @@ async function main(): Promise<void> {
           stopToStableTextMs: transcription.stopToStableTextMs,
           stopToFirstTextHarnessMs: transcription.stopToFirstTextHarnessMs,
           outputDeviceRestoreMs: transcription.outputDeviceRestoreMs,
+          // The response metric and its provenance, straight through from
+          // `Bridge.timingFields`. `stopToLastTextChangeMs` is the number that becomes
+          // a v2 Sample's `responseMs`; `stopToStableTextMs` above is kept for
+          // continuity and is NOT a response time.
+          stopToLastTextChangeMs: transcription.stopToLastTextChangeMs,
+          stabilityDelayMs: transcription.stabilityDelayMs,
+          textChangeSource: transcription.textChangeSource,
+          textChangeCount: transcription.textChangeCount,
+          textChangeBiasMs: transcription.textChangeBiasMs,
+          startToStopMs: transcription.startToStopMs,
+          timingClock: transcription.timingClock,
+          hotkeyEdge: transcription.hotkeyEdge,
           diagnostic: transcription.diagnostic,
         });
         result.aggregate = aggregate(result.samples);
-        completed.add(entry.id);
+        completed.add(entry.clipId);
+        remaining.delete(entry.clipId);
         // Kept honest after every clip, so a run that dies halfway advances the
         // cursor by the clips it finished and not by the clips it intended.
         result.selection = selectionFor(plan, measuredPrefix(plan, completed));
+        // Three atomic writes per scored clip, every one of them fsynced and renamed
+        // over its target. Never batched: a batch of 50 costs up to fifty clips of
+        // real-time playback on a crash, and afterwards those clips are
+        // indistinguishable from clips that were never planned.
         saveRun(runDir, run);
         saveCheckpoint(runDir, run, dataset);
+        saveV2(runDir, dataset, runPlan, run, result.samples, "incomplete", datasetsDirectory);
         console.log(
-          `${transcription.status}; WER ${(wer.wer * 100).toFixed(1)}%; stop→text ${formatMs(transcription.stopToStableTextMs)}`,
+          `${transcription.status}; WER ${(wer.wer * 100).toFixed(1)}%; ` +
+            `response ${formatMs(transcription.stopToLastTextChangeMs)} ` +
+            `(stable ${formatMs(transcription.stopToStableTextMs)}, includes ${transcription.stabilityDelayMs}ms wait)`,
         );
       }
     }
@@ -374,12 +570,52 @@ async function main(): Promise<void> {
     run.completedAt = new Date().toISOString();
     saveCodictateResults(runDir, run);
     saveRun(runDir, run);
+    // The v2 records are promoted to `completed` only here, after every planned clip of
+    // every dataset. `status` is explicit on the record and never inferred from "does
+    // it have as many samples as the plan asked for", because the two answers differ in
+    // the case that matters: a run killed after its last clip but before this line has
+    // every sample and is still not a completed run. Only `completed` records feed the
+    // production cursor, aggregation, coverage, staging or publication.
+    for (const plan of plans) {
+      const dataset = plan.dataset as DatasetId;
+      const result = run.results[dataset];
+      const entries = manifests.get(dataset);
+      if (!result || !entries) continue;
+      // Named, so a plan belonging to a different run is refused rather than read: a
+      // resume names its run id and never searches for a plan that looks close enough.
+      const runPlan = readRunPlan(planPath(runDir, dataset), run.runId);
+      if (!runPlan) continue;
+      saveV2(runDir, dataset, runPlan, run, result.samples, "completed", datasetsDirectory);
+    }
     deleteCheckpoint(runDir);
     console.log(`\nCompleted: ${join(runDir, "results.json")}`);
     console.log(`Comparable: ${join(runDir, "stt.json")}`);
   } finally {
     await adapter.close();
   }
+}
+
+/**
+ * The run directory `--resume <runId|runDir>` names.
+ *
+ * A path wins over a run id, so the `--resume results/<timestamp>_<name>` shape the
+ * README has always documented keeps working; a bare id is looked up under the results
+ * root, which is what the orchestrator passes. Neither is guessed at: a value that
+ * resolves to neither is an error naming both locations tried, because the alternative
+ * is starting a *new* run under a name the operator meant as a resume.
+ */
+export function resolveRunDir(resultsRoot: string, value: string): string {
+  const asPath = resolve(value);
+  if (existsSync(join(asPath, "results.json"))) return asPath;
+  const byId = join(resultsRoot, value);
+  if (existsSync(join(byId, "results.json"))) return byId;
+  throw new Error(
+    `--resume ${value} names no run. Looked for a results.json in:\n` +
+      `  ${join(asPath, "results.json")}\n` +
+      `  ${join(byId, "results.json")}\n` +
+      `Pass the run id or its directory. A resume never searches for the latest unfinished ` +
+      `run: that search resumes the wrong one silently.`,
+  );
 }
 
 /**
@@ -481,12 +717,14 @@ function buildPlan(
   run: BenchmarkRun,
   resultsRoot: string,
   fromIndex?: number,
+  /** Filled in with the manifests this plan was built from, so main() can reuse them. */
+  manifests = new Map<DatasetId, ManifestEntry[]>(),
 ): DatasetPlan[] {
   const config = run.config;
   const datasetsDir = datasetsRoot(config.codictatePath);
   if (!existsSync(datasetsDir)) throw new Error(`Codictate benchmark data missing: ${datasetsDir}`);
 
-  const manifests = new Map<DatasetId, ManifestEntry[]>();
+  manifests.clear();
   const fingerprints = new Map<string, { fingerprint: string; entryCount: number }>();
   for (const dataset of config.datasets) {
     const entries = buildManifest(datasetsDir, dataset);
@@ -518,7 +756,19 @@ function buildPlan(
     const recorded = run.results[dataset]?.selection;
     const current = fingerprints.get(dataset)!;
     if (!recorded) {
-      plans.push(planDataset(dataset, entries, cursors.get(dataset) ?? 0, request, fromIndex));
+      const plan = planDataset(dataset, entries, cursors.get(dataset) ?? 0, request, fromIndex);
+      // Defect 3, second half. The cursor no longer counts an unfinished run's depth,
+      // which is correct and on its own makes a *new* run start on clips an interrupted
+      // one is still working through. Blocked rather than merged: two processes
+      // measuring one clip write two measurements of it, and the newest-wins rule in
+      // `src/contract/aggregation.ts` would then pick a winner by timestamp — a coin
+      // flip dressed as a policy. The operator has the information to choose, and the
+      // message hands them the run id to choose with.
+      assertNoOverlappingIncompleteRun(
+        { orderedClipIds: plan.clips.map((entry) => entry.clipId) },
+        incompleteRunsFor(records, dataset, entries, { excludeRunId: run.runId }),
+      );
+      plans.push(plan);
       continue;
     }
     if (recorded.manifestFingerprint !== current.fingerprint) {
@@ -538,6 +788,151 @@ function buildPlan(
   return plans;
 }
 
+/** One slot in a session's clip list, and whether it is played. */
+export interface PlaylistSlot {
+  entry: ManifestEntry;
+  /** Position in the session's clip list, warmups included. */
+  index: number;
+  warmup: boolean;
+  /** `false` only for a scored clip already measured. Always `true` for a warmup. */
+  play: boolean;
+}
+
+/**
+ * What a session plays, slot by slot: the reserved warmups, then the scored clips that
+ * are still outstanding.
+ *
+ * Extracted from the run loop so the rule can be tested without an adapter, because the
+ * rule is defect 6 and it is one line wide. **A warmup is always played and a scored
+ * clip is played only if it is still in `remaining`**, and the `warmup` half is not
+ * redundant: `remaining` holds scored clipIds only - warmups are on the plan's separate
+ * `warmupClipIds` list and are deliberately absent from `orderedClipIds`, so
+ * `remaining.has(warmupClipId)` is `false` for **every** warmup. Drop the warmup guard
+ * and the completed-ID filter silently swallows all three of them, which is defect 6
+ * verbatim: a resumed session's first real clip becomes its warmup and the model is
+ * measured stone cold, with no signal anywhere.
+ *
+ * The warmup slots are the head of the list because `sessionEntries` builds
+ * `[...plan.warmups, ...plan.clips]`, and the boundary is counted from the plan's own
+ * warmup list rather than from `WARMUP_COUNT` so a resumed run replays the clips *it*
+ * warmed on even if the Warmup Reservation constant changes underneath it.
+ *
+ * Mirrors `src/contract/selection.ts::resumeSelection`.
+ */
+export function sessionPlaylist(
+  entries: readonly ManifestEntry[],
+  warmupCount: number,
+  remaining: ReadonlySet<string>,
+): PlaylistSlot[] {
+  return entries.map((entry, index) => {
+    const warmup = index < warmupCount;
+    return { entry, index, warmup, play: warmup || remaining.has(entry.clipId) };
+  });
+}
+
+/**
+ * The canonical `clipId` of a sample that may predate the field.
+ *
+ * A record written before 2026-09-04 has no `clipId`, but its `audioPath` already *is*
+ * the canonical string: `portableAudioPath` writes
+ * `fleurs/da_dk/audio/test/<hash>.wav` into every committed record, and SPEC §1 picked
+ * that spelling precisely because it already existed there. So the fallback re-derives
+ * rather than guesses, and the identity conversion is the **throwing**
+ * `clipIdFromAbsoluteAudioPath` / `clipIdFromRelativeAudioPath` rather than
+ * `portableAudioPath` itself: that function falls back to `basename` for a path it
+ * cannot make relative, which is right for a portable record and catastrophic as
+ * identity — a bare file name would pool one clip as two (SPEC addendum §K).
+ *
+ * In-memory samples carry absolute paths, because the runner has to open the WAV
+ * files; samples read back off disk carry the relative ones. Both are handled.
+ */
+export function sampleClipId(
+  sample: { clipId?: string; audioPath: string },
+  datasetsDirectory: string,
+): string {
+  if (sample.clipId) return sample.clipId;
+  return isAbsolute(sample.audioPath)
+    ? clipIdFromAbsoluteAudioPath(sample.audioPath, datasetsDirectory)
+    : clipIdFromRelativeAudioPath(sample.audioPath);
+}
+
+/**
+ * One `SampleResult` as the contract's per-Sample measurement.
+ *
+ * `responseMs` is `stopToLastTextChangeMs` and nothing else may stand in for it.
+ * `stopToStableTextMs` is the legacy fallback and it **includes** the 750 ms stability
+ * confirmation, so a sample that only has that number is not a v2 speed measurement —
+ * which is exactly what the absence of `hotkeyEdge`/`timingClock` in its `overhead`
+ * tells `src/contract/timing.ts::speedCompatible`.
+ *
+ * The provenance stamps are passed through **as recorded and never defaulted**. A
+ * `hotkeyEdge: "keydown"` invented here to satisfy a type would tell the pooling code
+ * that a pre-fix clip was measured properly, and the ~85 ms of optimism that filter
+ * exists to remove would be back in the published comparison.
+ */
+export function sampleMeasurementFor(
+  sample: SampleResult,
+  datasetsDirectory: string,
+): SampleMeasurementV2 {
+  const characterErrors = sample.cer
+    ? sample.cer.substitutions + sample.cer.insertions + sample.cer.deletions
+    : 0;
+  return {
+    clipId: sampleClipId(sample, datasetsDirectory),
+    ...(sample.sentenceId === undefined ? {} : { sentenceId: sample.sentenceId }),
+    audioDurationSec: sample.audioDurationSec,
+    responseMs: sample.stopToLastTextChangeMs ?? sample.stopToStableTextMs ?? null,
+    status: sample.status,
+    wordErrors: sample.wer.substitutions + sample.wer.insertions + sample.wer.deletions,
+    referenceWords: sample.wer.refWords,
+    charErrors: characterErrors,
+    referenceChars: sample.cer?.refChars ?? 0,
+    isWarmup: sample.warmup,
+    overhead: {
+      // This harness presses a global shortcut and watches an NSTextView. There is no
+      // other regime it could be in, so the discriminator is unconditional.
+      timingRegime: "ui-observed-paste",
+      ...(sample.hotkeyEdge == null ? {} : { hotkeyEdge: sample.hotkeyEdge }),
+      ...(sample.timingClock == null ? {} : { timingClock: sample.timingClock }),
+      ...(sample.textChangeSource == null ? {} : { observation: sample.textChangeSource }),
+      ...(sample.textChangeBiasMs == null ? {} : { textChangeBiasMs: sample.textChangeBiasMs }),
+      ...(sample.textChangeCount == null ? {} : { textChangeCount: sample.textChangeCount }),
+      ...(sample.stabilityDelayMs == null ? {} : { stabilityDelayMs: sample.stabilityDelayMs }),
+      ...(sample.startToStopMs == null ? {} : { startToStopMs: sample.startToStopMs }),
+      ...(sample.stopToStableTextMs == null ? {} : { stopToStableTextMs: sample.stopToStableTextMs }),
+      ...(sample.stopToFirstTextMs == null ? {} : { stopToFirstTextMs: sample.stopToFirstTextMs }),
+      ...(sample.outputDeviceRestoreMs == null
+        ? {}
+        : { outputDeviceRestoreMs: sample.outputDeviceRestoreMs }),
+    },
+    ...(sample.diagnostic === undefined ? {} : { failureDiagnostic: sample.diagnostic }),
+  };
+}
+
+/** Checkpoint one dataset's v2 run record. Atomic, fsynced, after every scored clip. */
+function saveV2(
+  runDir: string,
+  dataset: DatasetId,
+  runPlan: RunPlan,
+  run: BenchmarkRun,
+  samples: readonly SampleResult[],
+  status: "completed" | "incomplete",
+  datasetsDirectory: string,
+): void {
+  saveRunRecordV2(
+    runDir,
+    dataset,
+    buildRunRecordV2({
+      plan: runPlan,
+      status,
+      startedAt: run.createdAt,
+      completedAt: status === "completed" ? (run.completedAt ?? new Date().toISOString()) : null,
+      samples: samples.map((sample) => sampleMeasurementFor(sample, datasetsDirectory)),
+      ...(run.config.configurationNote ? { description: run.config.configurationNote } : {}),
+    }),
+  );
+}
+
 /**
  * How much of this dataset's planned range is already captured.
  *
@@ -546,9 +941,12 @@ function buildPlan(
  * honest contiguous depth even in a run directory that also holds samples from
  * outside this range.
  */
-function measuredPrefix(plan: DatasetPlan, captured: ReadonlySet<string>): number {
+export function measuredPrefix(plan: DatasetPlan, captured: ReadonlySet<string>): number {
   let measured = 0;
-  while (measured < plan.clips.length && captured.has(plan.clips[measured].id)) measured += 1;
+  // On `clipId`, not on the label `id`: a FLEURS sentence id repeats, so a prefix
+  // counted on it advanced for free over every clip that shared a sentence with an
+  // earlier one and recorded a depth nothing had transcribed (defect 1).
+  while (measured < plan.clips.length && captured.has(plan.clips[measured].clipId)) measured += 1;
   return measured;
 }
 
@@ -564,7 +962,16 @@ function aggregate(samples: SampleResult[]): DatasetResult["aggregate"] {
     (sample) => sample.cer!.substitutions + sample.cer!.insertions + sample.cer!.deletions,
   );
   const referenceChars = sum(cerSamples, (sample) => sample.cer!.refChars);
-  const latencies = scored
+  // Swift handoff item 3. `stopToStableTextMs` **includes** the 750 ms stability
+  // confirmation plus up to one poll of noticing it, so it is not a response time and
+  // a mean of it is not a mean response. `stopToLastTextChangeMs` is the raw stop-edge
+  // to last-text-change stamp and is the response metric; the fallback keeps runs
+  // recorded before 2026-09-04 readable, and those are exactly the runs
+  // `speedCompatible` keeps out of every pooled ratio.
+  const responses = scored
+    .map((sample) => sample.stopToLastTextChangeMs ?? sample.stopToStableTextMs)
+    .filter((value): value is number => value !== null && value !== undefined);
+  const stableLatencies = scored
     .map((sample) => sample.stopToStableTextMs)
     .filter((value): value is number => value !== null);
   return {
@@ -578,8 +985,12 @@ function aggregate(samples: SampleResult[]): DatasetResult["aggregate"] {
     referenceChars: referenceChars === 0 ? undefined : referenceChars,
     scoredSamples: scored.length,
     failures: scored.filter((sample) => sample.status !== "ok").length,
+    meanResponseMs:
+      responses.length === 0 ? null : responses.reduce((a, b) => a + b, 0) / responses.length,
     meanStopToStableTextMs:
-      latencies.length === 0 ? null : latencies.reduce((a, b) => a + b, 0) / latencies.length,
+      stableLatencies.length === 0
+        ? null
+        : stableLatencies.reduce((a, b) => a + b, 0) / stableLatencies.length,
   };
 }
 
@@ -608,9 +1019,35 @@ function deleteCheckpoint(runDir: string): void {
   if (existsSync(path)) unlinkSync(path);
 }
 
-function writeJsonAtomically(target: string, value: unknown): void {
+/**
+ * Write, flush to the platter, then rename over the target.
+ *
+ * The temporary file is a sibling on purpose: `rename` is only atomic within one
+ * filesystem, and a temp directory can be on another. The `fsync` is what makes the
+ * rename mean anything — without it a power loss can leave the directory entry
+ * pointing at a file whose contents never reached the disk, which is the one failure
+ * mode a checkpoint exists to survive. Best-effort, because a filesystem that refuses
+ * `fsync` must not fail a run that is otherwise fine.
+ *
+ * Called after **every scored clip**, never batched. A 50-clip batch means a crash
+ * costs up to 50 clips of real-time audio playback, and the clips it costs are
+ * indistinguishable afterwards from clips that were never planned.
+ */
+export function writeJsonAtomically(target: string, value: unknown): void {
   const temporary = `${target}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  const handle = openSync(temporary, "w");
+  try {
+    writeSync(handle, payload);
+    try {
+      fsyncSync(handle);
+    } catch {
+      // Some filesystems (and some CI sandboxes) refuse fsync. The rename is still
+      // ordered after the write; only the power-loss guarantee is lost.
+    }
+  } finally {
+    closeSync(handle);
+  }
   renameSync(temporary, target);
 }
 
@@ -673,8 +1110,17 @@ function printPlan(
   console.log(`Clips:     ${entries.length} (${warmupReplays} warmup replays + ${scored} scored)`);
   console.log(`Audio:     ${(audioSeconds / 60).toFixed(1)} minutes at 1.0×`);
   console.log(`Input:     ${run.config.deviceName}`);
+  console.log(
+    `Hotkey:    key code ${run.config.hotkey.keyCode} + ${run.config.hotkey.modifiers.join("+")} ` +
+      `(set Wispr Flow's Hands-free shortcut to match; nothing here can verify it)`,
+  );
   console.log(`Timeout:   ${run.config.timeoutMs}ms after dictation stops (flat; same for every clip)`);
-  console.log(`Polling:   every ${run.config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS}ms (granularity of stopToFirstTextMs)`);
+  console.log(
+    `Polling:   every ${run.config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS}ms (fallback only; ` +
+      `the bridge stamps text changes from the receiver's NSTextStorage notification and reports ` +
+      `its own bias per clip as textChangeBiasMs — 0 on that path, one whole interval when it ` +
+      `fell back to polling)`,
+  );
   console.log(`Output:    ${runDir}`);
   console.log("Plan:");
   for (const plan of plans) console.log(`  ${formatPlanLine(plan)}`);
@@ -686,7 +1132,11 @@ function parseArgs(args: string[]): CliOptions {
     datasets: [...DATASET_IDS],
     samples: DEFAULT_SAMPLES,
     deviceName: "BlackHole 2ch",
-    hotkey: { keyCode: 49, modifiers: ["option"] },
+    // Option+Z. See the `hotkey` field on `RunConfig`: `parseHotkey("option+z")` is the
+    // same derivation `--flow-hotkey` uses, so the default cannot drift from the flag.
+    hotkey: (({ keyCode, modifiers }) => ({ keyCode, modifiers }))(
+      parseHotkey(DEFAULT_FLOW_HOTKEY),
+    ),
     leadMs: 500,
     tailMs: 500,
     timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -698,6 +1148,39 @@ function parseArgs(args: string[]): CliOptions {
   let sawSamples = false;
   let sawTo = false;
 
+  // The resume refusals run **before** flag parsing, not after, because several of the
+  // thirteen are flags this harness does not accept at all (`--seed`, `--smoke`,
+  // `--limit`, Codictate's `--languages` and `--splits`). Parsed first, the operator
+  // would get "Unknown flag: --seed" — technically true and useless, since the real
+  // problem is that they asked a resume to change its selection. Checked on the argv
+  // tokens rather than on parsed options for the reason
+  // `src/contract/selection.ts::assertResumeFlags` gives: a parser fills in defaults,
+  // and once it has, "the operator passed --samples 200" is indistinguishable from
+  // "--samples defaulted to 200".
+  // `--resume X` and `--resume=X` both. Matched on the flag *name* rather than on an
+  // exact token, because the `=` form skipped this block entirely and then failed later
+  // with a message about something else - safe, but a misleading diagnosis.
+  const resumeIndex = args.findIndex(
+    (token) => token === "--resume" || token.startsWith("--resume="),
+  );
+  if (resumeIndex !== -1) {
+    const resumeToken = args[resumeIndex];
+    const resumeValue = resumeToken.includes("=")
+      ? resumeToken.slice(resumeToken.indexOf("=") + 1)
+      : args[resumeIndex + 1];
+    if (args.some((token) => token === "--from" || token.startsWith("--from="))) {
+      // Kept as its own message because it says more than the generic one: it explains
+      // that the resumed run already recorded the range it is measuring.
+      throw new Error(
+        "Use --from or --resume, not both. A resumed run already recorded the range it was " +
+          "measuring and carries the clips it finished from that range; rewinding it to a " +
+          "different start would file those clips against a range they do not belong to. " +
+          "Finish or abandon that run, then start a new one with --from.",
+      );
+    }
+    assertResumeFlags(args, resumeValue);
+  }
+
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     const value = () => {
@@ -708,6 +1191,11 @@ function parseArgs(args: string[]): CliOptions {
     switch (flag) {
       case "--name": options.name = value(); break;
       case "--resume": options.resume = value(); break;
+      case "--out": options.out = value(); break;
+      // Accepted and ignored for selection: the orchestrator passes it on every
+      // invocation, including resuming ones, so it names the batch a stage belongs to
+      // rather than the clips the stage measures.
+      case "--batch": config.batchId = value(); break;
       case "--dry-run": options.dryRun = true; break;
       case "--codictate": config.codictatePath = resolve(value()); break;
       case "--datasets": config.datasets = parseDatasets(value()); break;
@@ -717,6 +1205,15 @@ function parseArgs(args: string[]): CliOptions {
       case "--timeout-ms": config.timeoutMs = positiveInteger(value(), flag); break;
       case "--poll-interval-ms": config.pollIntervalMs = positiveInteger(value(), flag); break;
       case "--device": config.deviceName = value(); break;
+      // `option+z`, `option+space`, ... parsed rather than taken as a raw key code,
+      // because a key code is unreadable and the cost of getting it wrong is a whole
+      // night of timeouts. See `src/publication.ts::parseHotkey`, which is the one
+      // implementation both entry points use.
+      case "--flow-hotkey": {
+        const hotkey = parseHotkey(value());
+        config.hotkey = { keyCode: hotkey.keyCode, modifiers: hotkey.modifiers };
+        break;
+      }
       // Two spellings of one field, so the same command shape works in this harness and
       // in Codictate's `bench:stt`, which calls the free-text note `--description`. Both
       // write `config.configurationNote`; the recorded field name is unchanged.

@@ -8,9 +8,21 @@ import {
   type CompatibleSample,
 } from "../src/codictate-compat";
 
+/**
+ * A monotonic counter, so every fixture sample has a distinct and reproducible
+ * `audioPath` - which on a committed record *is* the canonical clipId string.
+ *
+ * Added because the leaf's `speedV2.sampleCount` is pooled unique scored clips, so
+ * identity is part of the fixture rather than incidental to it. `compatibleClipId`
+ * refuses a sample with no identity rather than collapsing them all to one placeholder
+ * (SPEC addendum §K), which is what a shared `audioPath` here would have exercised.
+ */
+let fixtureClip = 0;
+
 function sample(warmup: boolean, overrides: Record<string, unknown> = {}) {
   return {
     warmup,
+    audioPath: `librispeech/wav/test-clean/fixture-${fixtureClip++}.wav`,
     // Narrowed, since an override supplies the failing statuses and the helper's own
     // inferred `string` would not fit the sample type.
     status: "ok" as CompatibleSample["status"],
@@ -165,11 +177,17 @@ describe("Codictate-compatible artifacts", () => {
       "wispr-flow"
     ] as unknown as Record<string, unknown>;
 
-    // Withheld, not merely absent from this fixture. Every one of these was a sum or a
-    // mean over per-clip `stopToFirstTextMs` values that the bridge recorded with its
-    // own Core Audio output-device restore inside the measured window, worth roughly
-    // 300ms a clip. A consumer cannot tell such an aggregate from a clean one, so the
-    // transform publishes none until a run made after the fix exists.
+    // Gone and not renamed. Every one of these was a sum or a mean over per-clip
+    // `stopToFirstTextMs` values that the bridge recorded with its own Core Audio
+    // output-device restore inside the measured window, worth roughly 300ms a clip, and
+    // a consumer cannot tell such an aggregate from a clean one.
+    //
+    // The v2 replacement is the nested `leaf.speed` block, which is provenance-gated
+    // rather than silent: a clip that cannot prove its clock and its hotkey edge is
+    // excluded from the pooled ratio and counted in `speed.speedExcludedCount`. These
+    // five flat names stay absent so a reader of an old leaf and a reader of a new one
+    // can never be looking at the same field with two meanings. See
+    // `tests/compat-speed.test.ts`.
     for (const field of [
       "meanStopToFirstTextMs",
       "meanStopToStableTextMs",
@@ -287,6 +305,9 @@ describe("committed run records", () => {
   const DATASETS = ["da_dk", "es_419", "hu_hu", "test-clean", "test-other"];
 
   test("publish no speed figure, because this run's window held the harness's restore", () => {
+    // The v2 `leaf.speed` block reaches the same verdict for this run by a different
+    // route - every clip predates the hotkey-edge fix, so every clip is excluded and
+    // the pooled ratio is null. `tests/compat-speed.test.ts` asserts that directly.
     expect(Object.keys(leaves).sort()).toEqual(DATASETS);
 
     for (const dataset of DATASETS) {

@@ -9,7 +9,8 @@
     "benchmark": "bun run src/runner.ts",
     "backfill:selection": "bun run scripts/backfill-selection.ts",
     "check": "tsc --noEmit && bun test && swift build -c debug --package-path native",
-    "test": "bun test"
+    "test": "bun test",
+    "benchmark:publication": "bun run src/publication.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.10",

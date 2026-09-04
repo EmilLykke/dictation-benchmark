@@ -6,10 +6,18 @@
  * scheme the first three entries are a reserved warmup pool that is never consumed,
  * so such a run consumed consumable entries `[0, N - 3)`.
  *
- * The mapping is verified against the clip IDs actually stored in the run before
- * anything is written: sample `i` must be manifest entry `i`, the three warmups must
- * be exactly the manifest head, and scored sample `j` must be consumable entry `j`.
- * A run that does not satisfy that is reported and skipped rather than guessed at.
+ * The mapping is verified against the clips actually stored in the run before anything
+ * is written: sample `i` must be manifest entry `i`, the three warmups must be exactly
+ * the manifest head, and scored sample `j` must be consumable entry `j`. A run that
+ * does not satisfy that is reported and skipped rather than guessed at.
+ *
+ * The comparison is on **`clipId`** — the corpus-relative audio path — and not on the
+ * legacy `id`, which for FLEURS is the sentence id and repeats. Every committed record
+ * carries `audioPath` in exactly that spelling (`portableAudioPath`), so the identity
+ * is available for the whole archive. On the colliding `id` the positional check would
+ * have accepted a run whose clips were permuted within a sentence group, and then
+ * written a range that named different clips than the ones stored under it. Records so
+ * old that they carry no path at all fall back to `id` and say so in the report.
  *
  * Usage:
  *   bun run scripts/backfill-selection.ts [--codictate <path>] [--write] <runDir>...
@@ -26,13 +34,41 @@ import {
   WARMUP_COUNT,
   type DatasetSelection,
 } from "../src/selection";
+import { clipIdFromRelativeAudioPath, fingerprintV2Record } from "../src/contract";
 import { datasetsRoot } from "../src/portable-paths";
 import { DATASET_IDS, type DatasetId, type ManifestEntry } from "../src/types";
 
 interface StoredRun {
   runId: string;
   config: { samples?: number; datasets: DatasetId[] };
-  results: Record<string, { samples: Array<{ id: string; warmup: boolean }>; selection?: DatasetSelection }>;
+  results: Record<
+    string,
+    { samples: StoredSample[]; selection?: DatasetSelection }
+  >;
+}
+
+interface StoredSample {
+  id: string;
+  warmup: boolean;
+  /** Present on every committed record. Already the canonical clipId string. */
+  audioPath?: string;
+  /** Present on records written after clip identity landed. */
+  clipId?: string;
+}
+
+/**
+ * How one stored sample is compared against the manifest.
+ *
+ * `clipId` when the record has one or can be read as one, otherwise the legacy `id`.
+ * Returned as a tagged pair so the report can say which basis it used rather than
+ * leaving a reader to assume the strong one.
+ */
+function storedIdentity(sample: StoredSample): { basis: "clipId" | "id"; value: string } {
+  if (sample.clipId) return { basis: "clipId", value: sample.clipId };
+  if (sample.audioPath) {
+    return { basis: "clipId", value: clipIdFromRelativeAudioPath(sample.audioPath) };
+  }
+  return { basis: "id", value: sample.id };
 }
 
 interface Verdict {
@@ -45,22 +81,33 @@ interface Verdict {
 function verify(
   dataset: string,
   entries: ManifestEntry[],
-  stored: Array<{ id: string; warmup: boolean }>,
+  stored: StoredSample[],
 ): Verdict {
-  const manifestIds = entries.map((entry) => entry.id);
-  const warmupIds = warmupEntries(entries).map((entry) => entry.id);
-  const consumableIds = consumableEntries(entries).map((entry) => entry.id);
+  const identities = stored.map(storedIdentity);
+  const basis: "clipId" | "id" = identities.every((identity) => identity.basis === "clipId")
+    ? "clipId"
+    : "id";
+  const keyOf = (entry: ManifestEntry) => (basis === "clipId" ? entry.clipId : entry.id);
+  const storedKey = (index: number) => identities[index].value;
 
-  const prefixMismatch = stored.findIndex((sample, index) => manifestIds[index] !== sample.id);
+  const manifestIds = entries.map(keyOf);
+  const warmupIds = warmupEntries(entries).map(keyOf);
+  const consumableIds = consumableEntries(entries).map(keyOf);
+  const consumableClipIds = consumableEntries(entries).map((entry) => entry.clipId);
+
+  const prefixMismatch = stored.findIndex((_sample, index) => manifestIds[index] !== storedKey(index));
   if (prefixMismatch !== -1) {
     return {
       dataset,
       ok: false,
-      detail: `sample ${prefixMismatch} is ${stored[prefixMismatch].id}, manifest entry ${prefixMismatch} is ${manifestIds[prefixMismatch]}`,
+      detail: `sample ${prefixMismatch} is ${storedKey(prefixMismatch)}, manifest entry ${prefixMismatch} is ${manifestIds[prefixMismatch]} (compared by ${basis})`,
     };
   }
 
-  const storedWarmups = stored.filter((sample) => sample.warmup).map((sample) => sample.id);
+  const storedWarmups = stored
+    .map((sample, index) => ({ sample, key: storedKey(index) }))
+    .filter((entry) => entry.sample.warmup)
+    .map((entry) => entry.key);
   if (storedWarmups.join("|") !== warmupIds.join("|")) {
     return {
       dataset,
@@ -69,7 +116,10 @@ function verify(
     };
   }
 
-  const scored = stored.filter((sample) => !sample.warmup).map((sample) => sample.id);
+  const scored = stored
+    .map((sample, index) => ({ sample, key: storedKey(index) }))
+    .filter((entry) => !entry.sample.warmup)
+    .map((entry) => entry.key);
   const offset = scored.findIndex((id, index) => consumableIds[index] !== id);
   if (offset !== -1) {
     return {
@@ -85,15 +135,23 @@ function verify(
     detail:
       `${stored.length} stored samples = manifest[0..${stored.length - 1}]; ` +
       `${storedWarmups.length} warmups = manifest head; ` +
-      `${scored.length} scored = consumable[0..${scored.length - 1}] of ${consumableIds.length}`,
+      `${scored.length} scored = consumable[0..${scored.length - 1}] of ${consumableIds.length}; ` +
+      `compared by ${basis}`,
     selection: {
-      selectionVersion: 1,
+      selectionVersion: 2,
       warmupCount: WARMUP_COUNT,
       manifestFingerprint: manifestFingerprint(entries),
       manifestEntryCount: entries.length,
       consumableCount: consumableIds.length,
       startIndex: 0,
       endIndex: scored.length,
+      // A backfilled run measured `[0, scored)`, so its range *is* its contiguous
+      // prefix and there is no gap to distinguish. Recorded explicitly rather than
+      // left to `readRunSelections`'s fallback, so the archive stops depending on it.
+      contiguousEndIndex: scored.length,
+      maxMeasuredEndIndex: scored.length,
+      priorCursor: 0,
+      clipFingerprintV2: fingerprintV2Record(consumableClipIds.slice(0, scored.length)),
       plannedEndIndex: scored.length,
       requestedEndIndex: scored.length,
       truncated: false,

@@ -4,11 +4,11 @@ import AudioToolbox
 import AVFoundation
 import CoreAudio
 import Foundation
+import FlowBridgeCore
 
-private struct Hotkey: Decodable {
-    let keyCode: UInt16
-    let modifiers: [String]
-}
+/// One clock for the whole bridge, monotonic, shared so that a stamp taken in the
+/// text-change notification is comparable with a stamp taken at a hotkey edge.
+private let sharedClock = SystemMonotonicClock()
 
 private struct Request: Decodable {
     let id: Int
@@ -38,6 +38,9 @@ private final class CaptureWindow: NSObject, NSApplicationDelegate {
     private(set) var window: NSWindow!
     private(set) var textView: NSTextView!
 
+    /// Where the event-based end of the response window comes from.
+    private let textChanges = TextChangeLog()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         installMainMenu()
@@ -53,6 +56,28 @@ private final class CaptureWindow: NSObject, NSApplicationDelegate {
         textView.isContinuousSpellCheckingEnabled = false
         textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
         scrollView.documentView = textView
+
+        // The receiver window is this process's own `NSTextView`, so the text-change
+        // signal the benchmark wants is available in-process and does not need
+        // Accessibility at all: `NSTextStorage` posts this notification at the end of
+        // every edit that changes characters, whichever route the edit arrived by -
+        // Flow's synthetic Cmd+V, or an AX `setValue` on the text area, which AppKit
+        // implements by mutating this same text storage.
+        //
+        // An `AXObserver` on `kAXValueChangedNotification` was the alternative and is
+        // strictly worse here: observing your own process over AX means an
+        // `AXUIElementCreateApplication(getpid())` round trip through the
+        // accessibility server for a signal already being posted locally, it adds a
+        // second trust dependency to a harness that already fails preflight often
+        // enough on the first one, and `AXTextArea` value-changed arrives *after* the
+        // same edit that posts this notification. The AX path is what a harness would
+        // need if the receiver belonged to another application; it does not.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(receiverTextStorageDidChange(_:)),
+            name: NSTextStorage.didProcessEditingNotification,
+            object: textView.textStorage
+        )
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 760, height: 320),
@@ -70,6 +95,18 @@ private final class CaptureWindow: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             Bridge.shared.readRequests()
         }
+    }
+
+    /// Stamps the change itself, rather than the poll that later notices it.
+    ///
+    /// Runs on whichever thread performed the edit, which for an `NSTextView` is the
+    /// main thread - the same thread the bridge reads the log from through `onMain`,
+    /// which is what keeps `TextChangeLog` safe without a lock.
+    @objc private func receiverTextStorageDidChange(_ notification: Notification) {
+        guard let storage = notification.object as? NSTextStorage,
+              storage.editedMask.contains(.editedCharacters)
+        else { return }
+        textChanges.record(text: storage.string, at: sharedClock.now())
     }
 
     private func installMainMenu() {
@@ -99,19 +136,25 @@ private final class CaptureWindow: NSObject, NSApplicationDelegate {
 
     func focusAndClear() {
         textView.string = ""
+        // Cleared here, before the start hotkey, so the reset is outside both measured
+        // edges and the log holds exactly one clip's changes.
+        textChanges.reset()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(textView)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func capturedText() -> String {
-        textView.string
+    func textChangeSnapshot(since windowOpenedAt: MonotonicInstant) -> TextChangeSnapshot {
+        textChanges.snapshot(since: windowOpenedAt, liveText: textView.string)
     }
 }
 
 private final class Bridge {
     static let shared = Bridge()
     weak var captureWindow: CaptureWindow?
+
+    private let clock: MonotonicClock = sharedClock
+    private let poster: HotkeyEventPoster = CGEventHotkeyPoster()
 
     func readRequests() {
         while let line = readLine() {
@@ -197,11 +240,11 @@ private final class Bridge {
         /// being measured, and nothing about the device switch belongs to the product.
         func restoreOutputDevice() {
             guard switchedOutput, !outputRestored else { return }
-            let startedAt = Date()
+            let startedAt = clock.now()
             do {
                 try setDefaultOutputDevice(previousOutput)
                 outputRestored = true
-                outputDeviceRestoreMs = Date().timeIntervalSince(startedAt) * 1_000
+                outputDeviceRestoreMs = clock.now().milliseconds(since: startedAt)
             } catch {
                 // Left unrestored on purpose: the defer below retries before returning.
             }
@@ -214,96 +257,132 @@ private final class Bridge {
 
         onMain { self.captureWindow?.focusAndClear() }
         Thread.sleep(forTimeInterval: 0.2)
-        try post(hotkey)
+
+        // Both edges are stamped inside `postHotkey`, on the Z key-down transition.
+        // Before 2026-09-04 the stop edge was stamped after the whole chord had been
+        // posted and released - 70ms of nominal waits, 81 to 90ms measured on this
+        // machine by `testPostReturnStampWouldDropTheKeyHoldAndModifierRelease` - and
+        // that much of Flow's response was dropped from every record. See `postHotkey`.
+        let startedAt = try postHotkey(hotkey, poster: poster, clock: clock)
+
+        // Lead and tail padding, playback, and everything else the harness does to feed
+        // Flow the clip all sit between the two edges, before the stop stamp is taken.
         Thread.sleep(forTimeInterval: Double(leadMs) / 1_000)
 
         let playbackMs: Double
         do {
             playbackMs = try playAudio(path: audioPath)
         } catch {
-            try? post(hotkey)
+            let abortedStopAt = try? postHotkey(hotkey, poster: poster, clock: clock)
             restoreOutputDevice()
-            return [
-                "status": "failed",
-                "transcript": "",
-                "audioPlaybackMs": 0,
-                "stopToFirstTextMs": NSNull(),
-                "stopToStableTextMs": NSNull(),
-                "stopToFirstTextHarnessMs": NSNull(),
-                "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
-                "diagnostic": error.localizedDescription,
-            ]
+            var failure = timingFields(
+                startedAt: startedAt,
+                stoppedAt: abortedStopAt,
+                stableMs: stableMs,
+                pollIntervalMs: pollIntervalMs,
+                observation: nil,
+                outputDeviceRestoreMs: outputDeviceRestoreMs
+            )
+            failure["status"] = "failed"
+            failure["transcript"] = ""
+            failure["audioPlaybackMs"] = 0
+            failure["diagnostic"] = error.localizedDescription
+            return failure
         }
 
         Thread.sleep(forTimeInterval: Double(tailMs) / 1_000)
-        try post(hotkey)
 
-        // Nothing but the product's own work may sit between this stamp and the poll
-        // loop below. `stoppedAt` is the instant the stop hotkey was delivered, and
-        // every millisecond after it is attributed to Flow, so any harness work put
-        // here is charged to the product. The output-device restore used to live on
-        // the next line; it now runs on the way out. See `restoreOutputDevice`.
-        let stoppedAt = Date()
+        // `stoppedAt` is the Z key-down edge of the stop chord, taken inside
+        // `postHotkey`; the 50ms key hold and the 20ms Option release that follow it
+        // are Flow's response time, not the harness's, and are now inside the window
+        // where they belong.
+        let stoppedAt = try postHotkey(hotkey, poster: poster, clock: clock)
 
-        var firstTextAt: Date?
-        var lastChangeAt: Date?
-        var lastText = ""
-
-        /// The harness's own share of `stopToFirstTextMs`, measured rather than argued
-        /// about: the time spent inside `DispatchQueue.main.sync` reading the receiver
-        /// window, summed over the polls up to and including the one that first saw
-        /// text. Published so a run states its own overhead instead of leaving a reader
-        /// to infer it from the floor of a latency-against-duration scatter plot.
-        var stopToFirstTextHarnessMs = 0.0
-        let deadline = stoppedAt.addingTimeInterval(Double(timeoutMs) / 1_000)
-
-        while Date() < deadline {
-            let readStartedAt = Date()
-            let text = onMain { self.captureWindow?.capturedText() ?? "" }
-            if firstTextAt == nil {
-                stopToFirstTextHarnessMs += Date().timeIntervalSince(readStartedAt) * 1_000
+        let observation = observeResponseWindow(
+            openedAt: stoppedAt,
+            settings: ResponseWindowSettings(
+                stableMs: stableMs,
+                timeoutMs: timeoutMs,
+                pollIntervalMs: pollIntervalMs
+            ),
+            clock: clock,
+            sleep: { Thread.sleep(forTimeInterval: $0) },
+            readSnapshot: { windowOpenedAt in
+                onMain { self.captureWindow?.textChangeSnapshot(since: windowOpenedAt) ?? .empty }
             }
-            let hasMeaningfulText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            if text != lastText {
-                lastText = text
-                lastChangeAt = Date()
-                if hasMeaningfulText, firstTextAt == nil { firstTextAt = Date() }
-            }
-            if hasMeaningfulText,
-               let changedAt = lastChangeAt,
-               Date().timeIntervalSince(changedAt) * 1_000 >= Double(stableMs)
-            {
-                let stableAt = Date()
-                restoreOutputDevice()
-                return [
-                    "status": "ok",
-                    "transcript": text,
-                    "audioPlaybackMs": playbackMs,
-                    "stopToFirstTextMs": milliseconds(from: stoppedAt, to: firstTextAt),
-                    "stopToStableTextMs": milliseconds(from: stoppedAt, to: stableAt),
-                    "stopToFirstTextHarnessMs": firstTextAt == nil
-                        ? NSNull()
-                        : stopToFirstTextHarnessMs as Any,
-                    "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
-                ]
-            }
-            Thread.sleep(forTimeInterval: Double(pollIntervalMs) / 1_000)
-        }
+        )
 
         restoreOutputDevice()
-        return [
-            "status": "timeout",
-            "transcript": lastText,
-            "audioPlaybackMs": playbackMs,
-            "stopToFirstTextMs": milliseconds(from: stoppedAt, to: firstTextAt),
-            "stopToStableTextMs": NSNull(),
-            "stopToFirstTextHarnessMs": firstTextAt == nil
-                ? NSNull()
-                : stopToFirstTextHarnessMs as Any,
-            "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
-            "diagnostic": lastText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        var result = timingFields(
+            startedAt: startedAt,
+            stoppedAt: stoppedAt,
+            stableMs: stableMs,
+            pollIntervalMs: pollIntervalMs,
+            observation: observation,
+            outputDeviceRestoreMs: outputDeviceRestoreMs
+        )
+        result["transcript"] = observation.text
+        result["audioPlaybackMs"] = playbackMs
+        switch observation.outcome {
+        case .stable:
+            result["status"] = "ok"
+        case .timedOut:
+            result["status"] = "timeout"
+            result["diagnostic"] = observation.text
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Flow did not paste text before timeout"
-                : "Pasted text did not stabilize before timeout",
+                : "Pasted text did not stabilize before timeout"
+        }
+        return result
+    }
+
+    /// The timing half of a `transcribe` reply, in one place so the ok, timeout and
+    /// failed paths cannot drift apart on which fields they carry.
+    ///
+    /// `stopToLastTextChangeMs` is the response metric named by the benchmark
+    /// contract: stop key-down edge to the last actual change in the pasted text. It
+    /// is a raw stamp with nothing subtracted from it - the 750ms stability
+    /// confirmation happens *after* the instant it records, so the delay was never in
+    /// it. `stopToStableTextMs` is the older number and does contain that delay plus
+    /// up to one poll interval of noticing it; it stays for continuity with runs
+    /// before 2026-09-04 and must not be read as a response time.
+    private func timingFields(
+        startedAt: MonotonicInstant,
+        stoppedAt: MonotonicInstant?,
+        stableMs: Int,
+        pollIntervalMs: Int,
+        observation: ResponseWindowObservation?,
+        outputDeviceRestoreMs: Double?
+    ) -> [String: Any] {
+        let source = observation?.source
+        return [
+            "startToStopMs": stoppedAt.map { $0.milliseconds(since: startedAt) } as Any? ?? NSNull(),
+            "stopToFirstTextMs": stoppedAt.flatMap { stop in
+                observation.map { millisecondsOrNull(from: stop, to: $0.firstMeaningfulTextAt) }
+            } ?? NSNull(),
+            "stopToLastTextChangeMs": stoppedAt.flatMap { stop in
+                observation.map { millisecondsOrNull(from: stop, to: $0.lastTextChangeAt) }
+            } ?? NSNull(),
+            "stopToStableTextMs": stoppedAt.flatMap { stop in
+                observation.map { millisecondsOrNull(from: stop, to: $0.stabilityConfirmedAt) }
+            } ?? NSNull(),
+            "stabilityDelayMs": Double(stableMs),
+            "textChangeSource": source?.rawValue as Any? ?? NSNull(),
+            "textChangeCount": observation?.changeCount as Any? ?? NSNull(),
+            // Stated bias on the change stamps: zero on the event path because the
+            // notification stamps the change itself, one whole poll interval of
+            // worst case on the fallback path because there the stamp is the poll.
+            "textChangeBiasMs": source == nil ? NSNull() : (source == .poll ? Double(pollIntervalMs) : 0),
+            "stopToFirstTextHarnessMs": observation.flatMap {
+                $0.firstMeaningfulTextAt == nil ? nil : $0.harnessReadMsBeforeFirstText
+            } as Any? ?? NSNull(),
+            "outputDeviceRestoreMs": outputDeviceRestoreMs as Any? ?? NSNull(),
+            // Provenance, so a pooled figure can tell a post-fix clip from a pre-fix
+            // one without consulting a run date: monotonic clock, and both edges
+            // stamped at the hotkey's key-down transition.
+            "timingClock": "monotonic",
+            "hotkeyEdge": "keydown",
         ]
     }
 
@@ -400,7 +479,7 @@ private func playAudio(path: String) throws -> Double {
     let player = Process()
     player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
     player.arguments = [path]
-    let startedAt = Date()
+    let startedAt = sharedClock.now()
     do {
         try player.run()
     } catch {
@@ -410,7 +489,7 @@ private func playAudio(path: String) throws -> Double {
     guard player.terminationStatus == 0 else {
         throw BridgeError.audio("afplay failed with status \(player.terminationStatus): \(path)")
     }
-    return Date().timeIntervalSince(startedAt) * 1_000
+    return sharedClock.now().milliseconds(since: startedAt)
 }
 
 private func defaultOutputDevice() throws -> AudioDeviceID {
@@ -450,60 +529,6 @@ private func setDefaultOutputDevice(_ device: AudioDeviceID) throws {
     }
 }
 
-private func post(_ hotkey: Hotkey) throws {
-    guard CGPreflightPostEventAccess() else {
-        throw BridgeError.invalidRequest("Accessibility permission missing")
-    }
-    let source = CGEventSource(stateID: .combinedSessionState)
-    let modifiers = try hotkey.modifiers.map(modifierKey)
-    var flags: CGEventFlags = []
-    var modifierUps: [(event: CGEvent, flag: CGEventFlags)] = []
-
-    for modifier in modifiers {
-        guard let down = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: modifier.keyCode,
-            keyDown: true
-        ), let up = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: modifier.keyCode,
-            keyDown: false
-        ) else { throw BridgeError.invalidRequest("Could not create modifier event") }
-        flags.insert(modifier.flag)
-        down.flags = flags
-        down.post(tap: .cghidEventTap)
-        modifierUps.append((up, modifier.flag))
-        Thread.sleep(forTimeInterval: 0.02)
-    }
-
-    guard let down = CGEvent(keyboardEventSource: source, virtualKey: hotkey.keyCode, keyDown: true),
-          let up = CGEvent(keyboardEventSource: source, virtualKey: hotkey.keyCode, keyDown: false)
-    else { throw BridgeError.invalidRequest("Could not create keyboard event") }
-    down.flags.formUnion(flags)
-    up.flags.formUnion(flags)
-    down.post(tap: .cghidEventTap)
-    Thread.sleep(forTimeInterval: 0.05)
-    up.post(tap: .cghidEventTap)
-
-    for modifier in modifierUps.reversed() {
-        flags.remove(modifier.flag)
-        modifier.event.flags = flags
-        modifier.event.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.02)
-    }
-}
-
-private func modifierKey(_ name: String) throws -> (keyCode: UInt16, flag: CGEventFlags) {
-    switch name {
-    case "command": (55, .maskCommand)
-    case "control": (59, .maskControl)
-    case "fn": (63, .maskSecondaryFn)
-    case "option": (58, .maskAlternate)
-    case "shift": (56, .maskShift)
-    default: throw BridgeError.invalidRequest("Unknown hotkey modifier: \(name)")
-    }
-}
-
 private func flowApplication() -> (application: NSRunningApplication, version: String?)? {
     onMain {
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
@@ -526,11 +551,6 @@ private func onMain<T>(_ work: @escaping () -> T) -> T {
 private func require<T>(_ value: T?, _ name: String) throws -> T {
     guard let value else { throw BridgeError.invalidRequest("Missing \(name)") }
     return value
-}
-
-private func milliseconds(from start: Date, to end: Date?) -> Any {
-    guard let end else { return NSNull() }
-    return end.timeIntervalSince(start) * 1_000
 }
 
 private let app = NSApplication.shared
