@@ -12,6 +12,7 @@ import { DATASET_IDS, type DatasetId, type ManifestEntry, type ProductMetadata }
 import { buildCodictateCheckpoint, buildCodictateResults } from "./codictate-compat";
 
 const WARMUP_COUNT = 3;
+const DEFAULT_TIMEOUT_BUDGET_MS = 30_000;
 
 interface RunConfig {
   codictatePath: string;
@@ -21,7 +22,18 @@ interface RunConfig {
   hotkey: { keyCode: number; modifiers: ["option"] };
   leadMs: number;
   tailMs: number;
-  timeoutMs: number;
+  /**
+   * Headroom granted on top of the clip's own duration. The effective per-clip
+   * timeout is `audioDurationSec * 1000 + timeoutBudgetMs`, so a 5s clip and a
+   * 36s clip get the same amount of slack instead of the same total budget.
+   */
+  timeoutBudgetMs: number;
+  /**
+   * Legacy flat per-clip timeout recorded by runs made before the budget was
+   * audio-relative. Never written for new runs; kept so old `results.json`
+   * files still parse and can be resumed.
+   */
+  timeoutMs?: number;
   stableMs: number;
   configurationNote: string;
 }
@@ -99,6 +111,7 @@ async function main(): Promise<void> {
     runDir = resolve(options.resume);
     run = JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")) as BenchmarkRun;
     if (run.status === "completed") throw new Error(`Run already completed: ${runDir}`);
+    run.config = withTimeoutBudget(run.config);
   } else {
     if (!options.name) throw new Error("--name is required for a new run");
     const runId = `${timestamp()}_${slug(options.name)}`;
@@ -179,7 +192,7 @@ async function main(): Promise<void> {
           hotkey: run.config.hotkey,
           leadMs: run.config.leadMs,
           tailMs: run.config.tailMs,
-          timeoutMs: run.config.timeoutMs,
+          timeoutMs: effectiveTimeoutMs(run.config, entry.audioDurationSec),
           stableMs: run.config.stableMs,
         });
         const wallClockMs = performance.now() - startedAt;
@@ -224,6 +237,20 @@ async function main(): Promise<void> {
   } finally {
     await adapter.close();
   }
+}
+
+/**
+ * Per-clip timeout, relative to how long the clip actually is. A flat budget
+ * penalises datasets with long clips, which skews the timeout rate.
+ */
+function effectiveTimeoutMs(config: RunConfig, audioDurationSec: number): number {
+  return Math.round(audioDurationSec * 1_000 + config.timeoutBudgetMs);
+}
+
+/** Backfills the budget for runs recorded before `--timeout-budget-ms` existed. */
+function withTimeoutBudget(config: RunConfig): RunConfig {
+  if (typeof config.timeoutBudgetMs === "number") return config;
+  return { ...config, timeoutBudgetMs: DEFAULT_TIMEOUT_BUDGET_MS };
 }
 
 function buildPlan(config: RunConfig): Map<DatasetId, ManifestEntry[]> {
@@ -325,6 +352,7 @@ function printPlan(
   console.log(`Clips:     ${entries.length} (${WARMUP_COUNT} warmups per dataset)`);
   console.log(`Audio:     ${(audioSeconds / 60).toFixed(1)} minutes at 1.0×`);
   console.log(`Input:     ${run.config.deviceName}`);
+  console.log(`Timeout:   clip duration + ${run.config.timeoutBudgetMs}ms budget`);
   console.log(`Output:    ${runDir}`);
 }
 
@@ -337,7 +365,7 @@ function parseArgs(args: string[]): CliOptions {
     hotkey: { keyCode: 49, modifiers: ["option"] },
     leadMs: 500,
     tailMs: 500,
-    timeoutMs: 45_000,
+    timeoutBudgetMs: DEFAULT_TIMEOUT_BUDGET_MS,
     stableMs: 750,
     configurationNote: "",
   };
@@ -357,6 +385,7 @@ function parseArgs(args: string[]): CliOptions {
       case "--codictate": config.codictatePath = resolve(value()); break;
       case "--datasets": config.datasets = parseDatasets(value()); break;
       case "--samples": config.samples = positiveInteger(value(), flag); break;
+      case "--timeout-budget-ms": config.timeoutBudgetMs = positiveInteger(value(), flag); break;
       case "--device": config.deviceName = value(); break;
       case "--configuration-note": config.configurationNote = value(); break;
       default: throw new Error(`Unknown flag: ${flag}`);

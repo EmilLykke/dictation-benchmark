@@ -89,6 +89,33 @@ bun run benchmark -- \
   --configuration-note "Flow version recorded in results; English only; Context Awareness off"
 ```
 
+## Per-clip timeout
+
+Each clip's timeout is audio-relative:
+
+```
+effective timeout = audioDurationSec * 1000 + timeoutBudgetMs
+```
+
+The budget defaults to `30000` ms and is set with `--timeout-budget-ms <n>`:
+
+```bash
+bun run benchmark -- \
+  --name wispr-flow-all-20 \
+  --samples 20 \
+  --timeout-budget-ms 45000
+```
+
+A flat timeout gives short clips far more headroom than long ones — under the
+old flat 45s budget a 5s clip had 40s of slack while a 36s clip had 9s — so the
+timeout rate rose with clip length instead of tracking product behaviour. The
+budget is the slack granted on top of playback, so every clip is judged equally.
+
+The value used by a run is recorded in `results.json` under
+`config.timeoutBudgetMs`, so results are self-describing. Runs recorded before
+this change instead carry the flat `config.timeoutMs`; they still parse, and
+resuming one backfills the default budget.
+
 Runner writes two atomic progress files after every finished clip:
 
 - `results.json` preserves every hypothesis, error operation, latency, and status. Resume uses this file.
