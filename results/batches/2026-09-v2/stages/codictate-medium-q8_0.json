@@ -1,0 +1,35 @@
+{
+  "stageId": "codictate-medium-q8_0",
+  "status": "completed",
+  "attempts": 1,
+  "progress": {
+    "test-clean": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "test-other": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "es_419": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "da_dk": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "hu_hu": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    }
+  },
+  "startedAt": "2026-09-05T10:57:37.227Z",
+  "runId": "2026-09-05_10-57-37_2026-09-v2-medium-q8-0/test-other__crispasr__medium-q8_0",
+  "completedAt": "2026-09-05T11:20:40.232Z"
+}

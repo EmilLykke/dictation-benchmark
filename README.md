@@ -646,7 +646,7 @@ holds. Completed **scored** clips never repeat — including recorded `failed` a
 
 Atomic write after **every scored clip**, never batched: temporary file in the same
 directory, `fsync`, then `rename` over the target. **Three** writes per clip —
-`results.json`, `checkpoint.json`, and the dataset's v2 record under `v2/`. The Run Plan
+`results.json`, `checkpoint.json`, and the dataset's v2 record under `_v2/`. The Run Plan
 under `plans/` is written once, before the first clip, and never again: that is what
 makes it immutable.
 
@@ -656,7 +656,7 @@ Alongside `results.json`, each run directory holds:
 
 - `plans/<dataset>.json` — the immutable Run Plan, written once, refused if rewritten
   with a different fingerprint.
-- `v2/<dataset>.json` — the per-clip `RunRecordV2` both repositories write, with
+- `_v2/<dataset>.json` — the per-clip `RunRecordV2` both repositories write, with
   `schemaVersion: 2`, an explicit `status`, and one `SampleMeasurementV2` per clip.
 
 The v2 fingerprint is `fingerprintV2: { "version": "benchmark-v2", "value": "<16 hex>" }`

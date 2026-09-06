@@ -515,7 +515,7 @@ describe("8. v1-completed/v2-incomplete finalization crash is recoverable", () =
       "/datasets",
     );
 
-    expect(readRunRecordV2(join(runDir, "v2", "da_dk.json"))!.status).toBe("completed");
+    expect(readRunRecordV2(join(runDir, "_v2", "da_dk.json"))!.status).toBe("completed");
     expect(JSON.parse(readFileSync(join(runDir, "results.json"), "utf8")).status).toBe("completed");
     expect(Bun.file(join(runDir, "stt.json")).size).toBeGreaterThan(0);
   });

@@ -79,10 +79,10 @@ describe("benchmark CLI defaults", () => {
     const { exitCode, stdout } = await dryRun("--name", "already-there", "--to", "1");
 
     expect(exitCode).toBe(0);
-    // The committed 400-clip run recorded depth 397 for every dataset, so a target of
-    // 1 is behind the cursor everywhere.
+    // The committed 2026-09-v2 Flow run recorded depth 400 for every dataset, so a target
+    // of 1 is behind the cursor everywhere.
     for (const dataset of DATASET_IDS) {
-      expect(stdout).toContain(`${dataset}: cursor 397 -> 397 (nothing to run:`);
+      expect(stdout).toContain(`${dataset}: cursor 400 -> 400 (nothing to run:`);
     }
   });
 
@@ -105,13 +105,13 @@ describe("benchmark CLI defaults", () => {
       "REWIND: 5 datasets will re-measure clips already measured.",
     );
     for (const dataset of DATASET_IDS) {
-      // The committed 400-clip run left every dataset at 397, so --from 0 rewinds all
-      // five. Nothing may read as the ordinary forward `cursor A -> B` line.
+      // The committed 2026-09-v2 Flow run left every dataset at 400, so --from 0 rewinds
+      // all five. Nothing may read as the ordinary forward `cursor A -> B` line.
       expect(stdout).toContain(
-        `${dataset}: REWIND cursor 397 -> --from 0 (re-measuring clips 1-400 of`,
+        `${dataset}: REWIND cursor 400 -> --from 0 (re-measuring clips 1-400 of`,
       );
-      expect(stdout).toContain("397 of them already measured; cursor ends at 400, never lower than 397)");
-      expect(stdout).not.toContain(`${dataset}: cursor 397 -> 400`);
+      expect(stdout).toContain("400 of them already measured; cursor ends at 400, never lower than 400)");
+      expect(stdout).not.toContain(`${dataset}: cursor 400 -> 400`);
     }
   });
 
@@ -204,7 +204,7 @@ describe("benchmark CLI defaults", () => {
     // buildPlan used to throw when one dataset was short, aborting the whole run.
     expect(exitCode).toBe(0);
     for (const dataset of DATASET_IDS) {
-      expect(stdout).toContain(`${dataset}: cursor 397 ->`);
+      expect(stdout).toContain(`${dataset}: cursor 400 ->`);
       expect(stdout).toContain("EXHAUSTED");
     }
   });

@@ -1,0 +1,15 @@
+{
+  "stageId": "codictate-hviske-v5-tiny-q6_k",
+  "status": "completed",
+  "attempts": 1,
+  "progress": {
+    "da_dk": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    }
+  },
+  "startedAt": "2026-09-05T11:24:04.326Z",
+  "runId": "2026-09-05_11-24-04_2026-09-v2-hviske-v5-tiny-q6-k/da_dk__crispasr__hviske-v5-tiny-q6_k",
+  "completedAt": "2026-09-05T11:25:39.600Z"
+}

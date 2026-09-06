@@ -4,7 +4,7 @@
  *
  * A v1 `results.json` stays exactly what it was — an immutable legacy snapshot, still
  * read by `src/selection.ts` and `src/codictate-compat.ts`. A v2 record is a **second,
- * additive** file per dataset under `<runDir>/v2/<dataset>.json`, in the shape
+ * additive** file per dataset under `<runDir>/_v2/<dataset>.json`, in the shape
  * `src/contract/schema.ts::RunRecordV2` pins, so a pooling reader loads a record from
  * either repository without a per-repository adapter. The two are never merged and a
  * v1 aggregate leaf is never re-read as v2 per-clip measurements: there is no inverse.
@@ -60,8 +60,16 @@ const V2_RECORD_MARKER = new RegExp(
   `"(?:${SCHEMA_VERSION_KEY}|SCHEMA_VERSION)"\\s*:\\s*${SCHEMA_VERSION}\\b`,
 );
 
-/** Directory inside a run directory that holds the v2 records, one per dataset. */
-export const V2_DIR = "v2";
+/**
+ * Directory inside a run directory that holds the v2 records, one per dataset.
+ *
+ * Underscore-prefixed to match the archive convention the website reader is built on:
+ * `listDirNames()` in `benchmarks.ts` skips `_`-prefixed entries at both levels, which is
+ * what keeps a v2 record out of the published v1 run list by construction, and
+ * `scripts/generate-benchmarks.ts` fetches exactly `<runDir>/_v2/`. Spelled `v2` here, the
+ * records were invisible to every supported ingestion route.
+ */
+export const V2_DIR = "_v2";
 
 /** Directory inside a run directory that holds the immutable Run Plans. */
 export const PLAN_DIR = "plans";
@@ -167,7 +175,7 @@ export function writeJsonAtomic(target: string, value: unknown): void {
   renameSync(temporary, target);
 }
 
-/** `<runDir>/v2/<dataset>.json`. One file per dataset, checkpointed independently. */
+/** `<runDir>/_v2/<dataset>.json`. One file per dataset, checkpointed independently. */
 export function v2RecordPath(runDir: string, dataset: string): string {
   return join(runDir, V2_DIR, `${dataset}.json`);
 }
@@ -177,7 +185,7 @@ export function planPath(runDir: string, dataset: string): string {
   return join(runDir, PLAN_DIR, `${dataset}.json`);
 }
 
-/** Checkpoint one dataset's v2 record. Creates `<runDir>/v2/` on first use. */
+/** Checkpoint one dataset's v2 record. Creates `<runDir>/_v2/` on first use. */
 export function saveRunRecordV2(runDir: string, dataset: string, record: RunRecordV2): void {
   mkdirSync(join(runDir, V2_DIR), { recursive: true });
   writeJsonAtomic(v2RecordPath(runDir, dataset), record);
@@ -289,8 +297,8 @@ export interface ScannedV2Record {
 /**
  * How deep a scan walks, counted in directory levels below the root.
  *
- * `<root>/<runId>/v2/<dataset>.json` needs 2 - the walk enters `<runId>` at depth 1 and
- * `v2` at depth 2, and reads files there. Codictate nests one level deeper
+ * `<root>/<runId>/_v2/<dataset>.json` needs 2 - the walk enters `<runId>` at depth 1 and
+ * `_v2` at depth 2, and reads files there. Codictate nests one level deeper
  * (`<root>/<runDir>/_v2/<stage>.run.json` under a batch directory), so 4 leaves room
  * for a layout this repository does not own without walking an entire home directory
  * if someone points `--out` somewhere surprising.
@@ -301,7 +309,7 @@ const MAX_SCAN_DEPTH = 4;
  * Every v2 record under a results root, smoke output excluded.
  *
  * A bounded recursive walk rather than the single hard-coded
- * `<resultsRoot>/<runId>/v2/*.json` shape, because the orchestrator has to read the
+ * `<resultsRoot>/<runId>/_v2/*.json` shape, because the orchestrator has to read the
  * **Codictate** results tree as well as this one and the two layouts are not the same
  * — Codictate owns where it puts its v2 records, and a shape assumption here would
  * make a Codictate stage look permanently unmeasured. A file counts if it guards as a

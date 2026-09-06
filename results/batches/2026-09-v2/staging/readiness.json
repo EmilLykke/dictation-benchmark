@@ -1,0 +1,719 @@
+{
+  "batchId": "2026-09-v2",
+  "mode": "production",
+  "generatedAt": "2026-09-05T11:28:45.065Z",
+  "published": false,
+  "deployed": false,
+  "instrumentationNote": "Response times are not measured the same way for both products: Codictate is timed at the direct adapter call boundary, Wispr Flow is timed from the UI-observed paste.",
+  "stages": [
+    {
+      "stageId": "wispr-flow",
+      "harness": "wispr-flow",
+      "model": "wispr-flow",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v3-q5_0",
+      "harness": "codictate",
+      "model": "large-v3-q5_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v3",
+      "harness": "codictate",
+      "model": "large-v3",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v3-turbo",
+      "harness": "codictate",
+      "model": "large-v3-turbo",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v3-turbo-q5_0",
+      "harness": "codictate",
+      "model": "large-v3-turbo-q5_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v3-turbo-q8_0",
+      "harness": "codictate",
+      "model": "large-v3-turbo-q8_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-parakeet-tdt-0.6b-v3",
+      "harness": "codictate",
+      "model": "parakeet-tdt-0.6b-v3",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v1",
+      "harness": "codictate",
+      "model": "large-v1",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v2",
+      "harness": "codictate",
+      "model": "large-v2",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v2-q5_0",
+      "harness": "codictate",
+      "model": "large-v2-q5_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-large-v2-q8_0",
+      "harness": "codictate",
+      "model": "large-v2-q8_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-medium",
+      "harness": "codictate",
+      "model": "medium",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-medium-q5_0",
+      "harness": "codictate",
+      "model": "medium-q5_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-medium-q8_0",
+      "harness": "codictate",
+      "model": "medium-q8_0",
+      "status": "completed",
+      "progress": {
+        "test-clean": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "test-other": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "es_419": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        },
+        "hu_hu": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-f16",
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-f16",
+      "status": "completed",
+      "progress": {
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q8_0",
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q8_0",
+      "status": "completed",
+      "progress": {
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q6_k",
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q6_k",
+      "status": "completed",
+      "progress": {
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q5_0",
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q5_0",
+      "status": "completed",
+      "progress": {
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q4_k",
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q4_k",
+      "status": "completed",
+      "progress": {
+        "da_dk": {
+          "cursor": 400,
+          "maxMeasuredEnd": 400,
+          "clipCount": 400
+        }
+      }
+    }
+  ],
+  "preflight": [
+    {
+      "id": "datasets-root",
+      "label": "Datasets directory",
+      "status": "ok",
+      "detail": "/Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets"
+    },
+    {
+      "id": "manifest-test-clean",
+      "label": "Manifest source: test-clean",
+      "status": "ok",
+      "detail": "2620 audio files under /Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-clean"
+    },
+    {
+      "id": "manifest-test-other",
+      "label": "Manifest source: test-other",
+      "status": "ok",
+      "detail": "2939 audio files under /Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/librispeech/wav/test-other"
+    },
+    {
+      "id": "manifest-es_419",
+      "label": "Manifest source: es_419",
+      "status": "ok",
+      "detail": "908 audio files under /Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/fleurs/es_419/audio/test"
+    },
+    {
+      "id": "manifest-da_dk",
+      "label": "Manifest source: da_dk",
+      "status": "ok",
+      "detail": "930 audio files under /Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/fleurs/da_dk/audio/test"
+    },
+    {
+      "id": "manifest-hu_hu",
+      "label": "Manifest source: hu_hu",
+      "status": "ok",
+      "detail": "905 audio files under /Users/emillykkegrann/Documents/Projects/codictate-project/codictate/benchmarks/datasets/fleurs/hu_hu/audio/test"
+    },
+    {
+      "id": "free-disk",
+      "label": "Free disk",
+      "status": "ok",
+      "detail": "264.3 GiB free, 19.2 GiB required"
+    },
+    {
+      "id": "compatibility-state",
+      "label": "Compatibility state",
+      "status": "ok",
+      "detail": "5 Wispr Flow run record(s) across 1 tree(s), none incomplete, no stale checkpoints"
+    },
+    {
+      "id": "flow-running",
+      "label": "Wispr Flow running",
+      "status": "ok",
+      "detail": "1.6.774"
+    },
+    {
+      "id": "flow-version",
+      "label": "Virtual-microphone release",
+      "status": "ok",
+      "detail": "1.6.774 >= 1.6.580"
+    },
+    {
+      "id": "audio-device",
+      "label": "Audio device: BlackHole 2ch",
+      "status": "ok",
+      "detail": "found"
+    },
+    {
+      "id": "accessibility",
+      "label": "Accessibility permission",
+      "status": "ok",
+      "detail": "granted to flow-bridge"
+    },
+    {
+      "id": "model-large-v3-q5_0",
+      "label": "Speech Model: large-v3-q5_0",
+      "status": "ok",
+      "detail": "on disk (ggml-large-v3-q5_0.bin)"
+    },
+    {
+      "id": "model-large-v3",
+      "label": "Speech Model: large-v3",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 2900 MB (ggml-large-v3.bin)"
+    },
+    {
+      "id": "model-large-v3-turbo",
+      "label": "Speech Model: large-v3-turbo",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 1500 MB (ggml-large-v3-turbo.bin)"
+    },
+    {
+      "id": "model-large-v3-turbo-q5_0",
+      "label": "Speech Model: large-v3-turbo-q5_0",
+      "status": "ok",
+      "detail": "on disk (ggml-large-v3-turbo-q5_0.bin)"
+    },
+    {
+      "id": "model-large-v3-turbo-q8_0",
+      "label": "Speech Model: large-v3-turbo-q8_0",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 834 MB (ggml-large-v3-turbo-q8_0.bin)"
+    },
+    {
+      "id": "model-parakeet-tdt-0.6b-v3",
+      "label": "Speech Model: parakeet-tdt-0.6b-v3",
+      "status": "ok",
+      "detail": "on disk (parakeet-tdt-0.6b-v3-coreml)"
+    },
+    {
+      "id": "model-large-v1",
+      "label": "Speech Model: large-v1",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 2900 MB (ggml-large-v1.bin)"
+    },
+    {
+      "id": "model-large-v2",
+      "label": "Speech Model: large-v2",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 2900 MB (ggml-large-v2.bin)"
+    },
+    {
+      "id": "model-large-v2-q5_0",
+      "label": "Speech Model: large-v2-q5_0",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 1100 MB (ggml-large-v2-q5_0.bin)"
+    },
+    {
+      "id": "model-large-v2-q8_0",
+      "label": "Speech Model: large-v2-q8_0",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 1500 MB (ggml-large-v2-q8_0.bin)"
+    },
+    {
+      "id": "model-medium",
+      "label": "Speech Model: medium",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 1500 MB (ggml-medium.bin)"
+    },
+    {
+      "id": "model-medium-q5_0",
+      "label": "Speech Model: medium-q5_0",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 514 MB (ggml-medium-q5_0.bin)"
+    },
+    {
+      "id": "model-medium-q8_0",
+      "label": "Speech Model: medium-q8_0",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 785 MB (ggml-medium-q8_0.bin)"
+    },
+    {
+      "id": "model-hviske-v5-tiny-f16",
+      "label": "Speech Model: hviske-v5-tiny-f16",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 503 MB (hviske-v5-tiny-f16.gguf)"
+    },
+    {
+      "id": "model-hviske-v5-tiny-q8_0",
+      "label": "Speech Model: hviske-v5-tiny-q8_0",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 268 MB (hviske-v5-tiny-q8_0.gguf)"
+    },
+    {
+      "id": "model-hviske-v5-tiny-q6_k",
+      "label": "Speech Model: hviske-v5-tiny-q6_k",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 232 MB (hviske-v5-tiny-q6_k.gguf)"
+    },
+    {
+      "id": "model-hviske-v5-tiny-q5_0",
+      "label": "Speech Model: hviske-v5-tiny-q5_0",
+      "status": "ok",
+      "detail": "on disk (hviske-v5-tiny-q5_0.gguf)"
+    },
+    {
+      "id": "model-hviske-v5-tiny-q4_k",
+      "label": "Speech Model: hviske-v5-tiny-q4_k",
+      "status": "ok",
+      "detail": "will be downloaded before the first clip, 153 MB (hviske-v5-tiny-q4_k.gguf)"
+    }
+  ]
+}

@@ -1,0 +1,1140 @@
+{
+  "manifestVersion": 1,
+  "batchId": "2026-09-v2",
+  "mode": "production",
+  "createdAt": "2026-09-04T20:14:42.523Z",
+  "fromIndex": 0,
+  "toIndex": 400,
+  "flowHotkey": "option+z",
+  "deviceName": "BlackHole 2ch",
+  "instrumentationNote": "Response times are not measured the same way for both products: Codictate is timed at the direct adapter call boundary, Wispr Flow is timed from the UI-observed paste.",
+  "stages": [
+    {
+      "stageId": "wispr-flow",
+      "order": 0,
+      "harness": "wispr-flow",
+      "model": "wispr-flow",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v3-q5_0",
+      "order": 1,
+      "harness": "codictate",
+      "model": "large-v3-q5_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v3",
+      "order": 2,
+      "harness": "codictate",
+      "model": "large-v3",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v3-turbo",
+      "order": 3,
+      "harness": "codictate",
+      "model": "large-v3-turbo",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v3-turbo-q5_0",
+      "order": 4,
+      "harness": "codictate",
+      "model": "large-v3-turbo-q5_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v3-turbo-q8_0",
+      "order": 5,
+      "harness": "codictate",
+      "model": "large-v3-turbo-q8_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-parakeet-tdt-0.6b-v3",
+      "order": 6,
+      "harness": "codictate",
+      "model": "parakeet-tdt-0.6b-v3",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v1",
+      "order": 7,
+      "harness": "codictate",
+      "model": "large-v1",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v2",
+      "order": 8,
+      "harness": "codictate",
+      "model": "large-v2",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v2-q5_0",
+      "order": 9,
+      "harness": "codictate",
+      "model": "large-v2-q5_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-large-v2-q8_0",
+      "order": 10,
+      "harness": "codictate",
+      "model": "large-v2-q8_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-medium",
+      "order": 11,
+      "harness": "codictate",
+      "model": "medium",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-medium-q5_0",
+      "order": 12,
+      "harness": "codictate",
+      "model": "medium-q5_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-medium-q8_0",
+      "order": 13,
+      "harness": "codictate",
+      "model": "medium-q8_0",
+      "plans": [
+        {
+          "dataset": "test-clean",
+          "datasetId": "librispeech/test-clean",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2958.299999999998,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "5f0a061fe8a4afc1"
+          }
+        },
+        {
+          "dataset": "test-other",
+          "datasetId": "librispeech/test-other",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 2756.080062500003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "35715affcf4d4eff"
+          }
+        },
+        {
+          "dataset": "es_419",
+          "datasetId": "fleurs/es_419",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4973.700000000002,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "b32e9dd3299a179e"
+          }
+        },
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        },
+        {
+          "dataset": "hu_hu",
+          "datasetId": "fleurs/hu_hu",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4848.239999999999,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "86dd4e12e187554e"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-f16",
+      "order": 14,
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-f16",
+      "plans": [
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q8_0",
+      "order": 15,
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q8_0",
+      "plans": [
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q6_k",
+      "order": 16,
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q6_k",
+      "plans": [
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q5_0",
+      "order": 17,
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q5_0",
+      "plans": [
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "codictate-hviske-v5-tiny-q4_k",
+      "order": 18,
+      "harness": "codictate",
+      "model": "hviske-v5-tiny-q4_k",
+      "plans": [
+        {
+          "dataset": "da_dk",
+          "datasetId": "fleurs/da_dk",
+          "fromIndex": 0,
+          "toIndex": 400,
+          "clipCount": 400,
+          "warmupCount": 3,
+          "audioDurationSec": 4439.340000000003,
+          "fingerprintV2": {
+            "version": "benchmark-v2",
+            "value": "977a60cbffe9800b"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -697,7 +697,7 @@ function recordFor(
   clipIds: readonly string[],
 ) {
   return {
-    relativePath: `${runId}/v2/${plan.datasetId.split("/").at(-1)}.json`,
+    relativePath: `${runId}/_v2/${plan.datasetId.split("/").at(-1)}.json`,
     record: buildRunRecordV2({
       plan,
       status,
@@ -1089,7 +1089,7 @@ describe("F1: a record only completes its OWN series", () => {
 describe("smoke output is excluded from every production read", () => {
   test("isSmokePath matches the directory and not a run whose name mentions smoke", () => {
     expect(isSmokePath("smoke")).toBe(true);
-    expect(isSmokePath(join("smoke", "batch-1", "run", "v2", "da_dk.json"))).toBe(true);
+    expect(isSmokePath(join("smoke", "batch-1", "run", "_v2", "da_dk.json"))).toBe(true);
     expect(isSmokePath("20260904_000000_smoke-check")).toBe(false);
     expect(isSmokePath(join("batches", "2026-09-v2", "batch.json"))).toBe(false);
   });

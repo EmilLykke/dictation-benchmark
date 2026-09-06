@@ -1,0 +1,35 @@
+{
+  "stageId": "codictate-parakeet-tdt-0.6b-v3",
+  "status": "completed",
+  "attempts": 1,
+  "progress": {
+    "test-clean": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "test-other": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "es_419": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "da_dk": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    },
+    "hu_hu": {
+      "cursor": 400,
+      "maxMeasuredEnd": 400,
+      "clipCount": 400
+    }
+  },
+  "startedAt": "2026-09-05T07:03:31.389Z",
+  "runId": "2026-09-05_07-03-31_2026-09-v2-parakeet-tdt-0-6b-v3/test-other__crispasr__parakeet-tdt-0.6b-v3",
+  "completedAt": "2026-09-05T07:10:02.349Z"
+}
