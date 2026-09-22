@@ -1,0 +1,63 @@
+{
+  "description": "Wispr Flow 1.6.872 external-product benchmark; da_dk clips 401-927 again on Flow 1.6.827",
+  "instrumentationNote": "Response times are not measured the same way for both products: Codictate is timed at the direct adapter call boundary, Wispr Flow is timed from the UI-observed paste.",
+  "hardware": {
+    "chip": "Apple M4 Max",
+    "ram": "36 GB",
+    "os": "macOS",
+    "osVersion": "26.6.2"
+  },
+  "runDate": "2026-09-16T20:37:41.577Z",
+  "config": {
+    "sampleSize": 527,
+    "warmupCount": 3,
+    "normalization": "whisper-basic",
+    "stableMs": 750,
+    "pollIntervalMs": 10
+  },
+  "librispeech": {},
+  "fleurs": {
+    "da_dk": {
+      "external-product": {
+        "wispr-flow": {
+          "wer": 0.06395297833143258,
+          "referenceWords": 11399,
+          "wordErrors": 729,
+          "cer": 0.04638128615932354,
+          "referenceChars": 71904,
+          "charErrors": 3335,
+          "meanRTF": 1.512042604829936,
+          "speedV2": {
+            "responseMsPerAudioSec": 230.13841868205495,
+            "responseMs": 1408198.5728420008,
+            "audioDurationSec": 6118.920000000005,
+            "wallRtf": 0.23013841868205495,
+            "medianResponseMs": 2594.283958,
+            "p90ResponseMs": 3606.859916,
+            "attemptedCount": 527,
+            "respondedCount": 527,
+            "speedExcludedCount": 0,
+            "missingDurationCount": 0,
+            "failureCount": 0,
+            "timeoutCount": 0,
+            "sampleCount": 527,
+            "inferenceRtf": null,
+            "inferenceMs": 0,
+            "inferenceAudioSec": 0,
+            "inferenceSampleCount": 0,
+            "inferenceSkippedCount": 527
+          },
+          "peakRSS_MB": null,
+          "utteranceCount": 527,
+          "failures": 0,
+          "failuresByStatus": {
+            "timeout": 0,
+            "failed": 0
+          },
+          "totalAudioSec": 6118.920000000005,
+          "totalWallSec": 9252.067735546
+        }
+      }
+    }
+  }
+}
