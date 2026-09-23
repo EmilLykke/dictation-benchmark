@@ -1,0 +1,90 @@
+{
+  "format": "apple-dictation-experimental-v1",
+  "product": {
+    "id": "apple-dictation",
+    "label": "Apple Dictation",
+    "version": "26.6.2"
+  },
+  "status": "failed",
+  "createdAt": "2026-09-17T16:23:01.233Z",
+  "config": {
+    "dataset": "da_dk",
+    "locale": "da-DK",
+    "processingMode": "unknown",
+    "stableMs": 2000,
+    "timeoutMs": 5000,
+    "samples": 1,
+    "from": 0,
+    "hotkey": {
+      "keyCode": 7,
+      "modifiers": [
+        "option"
+      ],
+      "spec": "option+x"
+    },
+    "leadMs": 2000,
+    "tailMs": 500,
+    "deviceName": "BlackHole 2ch",
+    "configurationNote": "",
+    "codictatePath": "<codictate>",
+    "out": "<run-directory>",
+    "dryRun": false,
+    "preflight": false,
+    "help": false,
+    "settingsVerified": false
+  },
+  "machine": {
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "osBuild": "25G83"
+  },
+  "speedEligible": false,
+  "samples": [
+    {
+      "clipId": "fleurs/da_dk/audio/test/5201915393021401660.wav",
+      "warmup": true,
+      "audioDurationSec": 8.76,
+      "reference": "på bare to uger havde amerikanerne og de frie franske styrker befriet det sydlige frankrig og var ved at fokusere mod tyskland",
+      "hypothesis": "",
+      "wer": {
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 22,
+        "wer": 1,
+        "refWords": 22
+      },
+      "cer": {
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 127,
+        "cer": 1,
+        "refChars": 127
+      },
+      "observation": {
+        "diagnostic": "Dictation produced no committed text before timeout",
+        "stopToStableTextMs": null,
+        "stabilityDelayMs": 2000,
+        "textChangeSource": "poll",
+        "transcript": "",
+        "textChangeCount": 0,
+        "stopToFirstTextMs": null,
+        "stopToFirstTextHarnessMs": null,
+        "timingClock": "monotonic",
+        "textChangeBiasMs": 20,
+        "outputDeviceRestoreMs": null,
+        "hotkeyEdge": "keydown",
+        "stopToLastTextChangeMs": null,
+        "status": "timeout",
+        "startToStopMs": 12100.070625,
+        "audioPlaybackMs": 9516.431791
+      }
+    }
+  ],
+  "aggregate": {
+    "attempted": 0,
+    "succeeded": 0,
+    "wordErrors": 0,
+    "referenceWords": 0,
+    "wer": null
+  }
+}

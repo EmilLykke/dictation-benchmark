@@ -13,6 +13,7 @@ private let sharedClock = SystemMonotonicClock()
 private struct Request: Decodable {
     let id: Int
     let command: String
+    let product: String?
     let deviceName: String?
     let audioPath: String?
     let hotkey: Hotkey?
@@ -183,9 +184,13 @@ private final class Bridge {
         case "preflight":
             let expectedDevice = try require(request.deviceName, "deviceName")
             let devices = audioDevices()
+            let dictationPreferences = UserDefaults(suiteName: "com.apple.speech.recognition.AppleSpeechRecognition.prefs")
             respond(id: request.id, result: [
                 "accessibilityTrusted": CGPreflightPostEventAccess(),
-                "productRunning": flowApplication() != nil,
+                "productRunning": request.product == "apple-dictation" || flowApplication() != nil,
+                "receiverBundleIdentifier": Bundle.main.bundleIdentifier as Any? ?? NSNull(),
+                "dictationLocalePreference": dictationPreferences?.string(forKey: "DictationIMNetworkBasedLocaleIdentifier") as Any? ?? NSNull(),
+                "dictationMicrophonePreference": dictationPreferences?.string(forKey: "DictationIMMicrophoneName") as Any? ?? NSNull(),
                 "outputDeviceFound": devices.contains { $0.name == expectedDevice },
                 "outputDevices": devices.map(\.name),
             ])
@@ -207,6 +212,8 @@ private final class Bridge {
         let audioPath = try require(request.audioPath, "audioPath")
         let deviceName = try require(request.deviceName, "deviceName")
         let hotkey = try require(request.hotkey, "hotkey")
+        let isApple = request.product == "apple-dictation"
+        let stopHotkey = isApple ? Hotkey(keyCode: 53, modifiers: []) : hotkey
         let leadMs = try require(request.leadMs, "leadMs")
         let tailMs = try require(request.tailMs, "tailMs")
         let timeoutMs = try require(request.timeoutMs, "timeoutMs")
@@ -217,11 +224,20 @@ private final class Bridge {
             throw BridgeError.audio("Audio device not found: \(deviceName)")
         }
         let previousOutput = try defaultOutputDevice()
-        let switchedOutput = previousOutput != outputDevice.id
+        let systemOutput: AudioDeviceID
+        if isApple && previousOutput == outputDevice.id {
+            guard let separateOutput = audioDevices().first(where: { $0.id != outputDevice.id }) else {
+                throw BridgeError.audio("Apple Dictation needs a separate system output device to avoid muting the virtual microphone feed")
+            }
+            systemOutput = separateOutput.id
+        } else {
+            systemOutput = isApple ? previousOutput : outputDevice.id
+        }
+        let switchedOutput = previousOutput != systemOutput
         var outputRestored = false
         var outputDeviceRestoreMs: Double?
         if switchedOutput {
-            try setDefaultOutputDevice(outputDevice.id)
+            try setDefaultOutputDevice(systemOutput)
             Thread.sleep(forTimeInterval: 0.5)
         }
 
@@ -271,9 +287,11 @@ private final class Bridge {
 
         let playbackMs: Double
         do {
-            playbackMs = try playAudio(path: audioPath)
+            playbackMs = isApple
+                ? try playAudioOnDevice(path: audioPath, device: outputDevice.id)
+                : try playAudio(path: audioPath)
         } catch {
-            let abortedStopAt = try? postHotkey(hotkey, poster: poster, clock: clock)
+            let abortedStopAt = try? postHotkey(stopHotkey, poster: poster, clock: clock)
             restoreOutputDevice()
             var failure = timingFields(
                 startedAt: startedAt,
@@ -296,7 +314,7 @@ private final class Bridge {
         // `postHotkey`; the 50ms key hold and the 20ms Option release that follow it
         // are Flow's response time, not the harness's, and are now inside the window
         // where they belong.
-        let stoppedAt = try postHotkey(hotkey, poster: poster, clock: clock)
+        let stoppedAt = try postHotkey(stopHotkey, poster: poster, clock: clock)
 
         let observation = observeResponseWindow(
             openedAt: stoppedAt,
@@ -308,7 +326,11 @@ private final class Bridge {
             clock: clock,
             sleep: { Thread.sleep(forTimeInterval: $0) },
             readSnapshot: { windowOpenedAt in
-                onMain { self.captureWindow?.textChangeSnapshot(since: windowOpenedAt) ?? .empty }
+                onMain {
+                    guard let capture = self.captureWindow else { return .empty }
+                    if isApple && capture.textView.hasMarkedText() { return .empty }
+                    return capture.textChangeSnapshot(since: windowOpenedAt)
+                }
             }
         )
 
@@ -322,6 +344,14 @@ private final class Bridge {
             observation: observation,
             outputDeviceRestoreMs: outputDeviceRestoreMs
         )
+        if isApple {
+            // Dictation may insert text before stop. The Flow timing window is not
+            // a valid Apple latency measurement, even when a transcript is captured.
+            for key in ["stopToFirstTextMs", "stopToStableTextMs", "stopToLastTextChangeMs",
+                        "stopToFirstTextHarnessMs"] {
+                result[key] = NSNull()
+            }
+        }
         result["transcript"] = observation.text
         result["audioPlaybackMs"] = playbackMs
         switch observation.outcome {
@@ -331,7 +361,7 @@ private final class Bridge {
             result["status"] = "timeout"
             result["diagnostic"] = observation.text
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Flow did not paste text before timeout"
+                ? (isApple ? "Dictation produced no committed text before timeout" : "Flow did not paste text before timeout")
                 : "Pasted text did not stabilize before timeout"
         }
         return result
@@ -461,9 +491,9 @@ private func deviceHasOutput(_ id: AudioDeviceID) -> Bool {
     return UnsafeMutableAudioBufferListPointer(list).contains { $0.mNumberChannels > 0 }
 }
 
-private func deviceName(_ id: AudioDeviceID) -> String? {
+private func deviceName(_ id: AudioDeviceID, selector: AudioObjectPropertySelector = kAudioObjectPropertyName) -> String? {
     var address = AudioObjectPropertyAddress(
-        mSelector: kAudioObjectPropertyName,
+        mSelector: selector,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
@@ -473,6 +503,27 @@ private func deviceName(_ id: AudioDeviceID) -> String? {
           let value = name?.takeUnretainedValue()
     else { return nil }
     return value as String
+}
+
+private func playAudioOnDevice(path: String, device: AudioDeviceID) throws -> Double {
+    guard let uid = deviceName(device, selector: kAudioDevicePropertyDeviceUID),
+          let sound = onMain({ NSSound(contentsOf: URL(fileURLWithPath: path), byReference: false) })
+    else { throw BridgeError.audio("Could not create audio playback for the selected device") }
+    let startedAt = sharedClock.now()
+    let didStart = onMain {
+        sound.playbackDeviceIdentifier = uid
+        return sound.play()
+    }
+    guard didStart else { throw BridgeError.audio("Could not play audio on the selected device") }
+    defer { _ = onMain { sound.stop() } }
+    let deadline = startedAt.advanced(byMilliseconds: onMain { sound.duration * 1_000 } + 10_000)
+    while onMain({ sound.isPlaying }) {
+        guard sharedClock.now() < deadline else {
+            throw BridgeError.audio("Audio playback exceeded its duration by more than ten seconds")
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    return sharedClock.now().milliseconds(since: startedAt)
 }
 
 private func playAudio(path: String) throws -> Double {

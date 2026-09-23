@@ -59,6 +59,10 @@ export interface ProductMetadata {
 }
 
 export interface PreflightResult {
+  receiverBundleIdentifier?: string | null;
+  /** Saved macOS preferences are advisory; they are not a verified live session state. */
+  dictationLocalePreference?: string | null;
+  dictationMicrophonePreference?: string | null;
   accessibilityTrusted: boolean;
   productRunning: boolean;
   outputDeviceFound: boolean;

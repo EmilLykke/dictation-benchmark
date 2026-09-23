@@ -1,0 +1,90 @@
+{
+  "format": "apple-dictation-experimental-v1",
+  "product": {
+    "id": "apple-dictation",
+    "label": "Apple Dictation",
+    "version": "26.6.2"
+  },
+  "status": "failed",
+  "createdAt": "2026-09-17T16:27:20.783Z",
+  "config": {
+    "dataset": "da_dk",
+    "locale": "da-DK",
+    "processingMode": "unknown",
+    "stableMs": 2000,
+    "timeoutMs": 45000,
+    "samples": 5,
+    "from": 0,
+    "hotkey": {
+      "keyCode": 7,
+      "modifiers": [
+        "option"
+      ],
+      "spec": "option+x"
+    },
+    "leadMs": 2000,
+    "tailMs": 500,
+    "deviceName": "BlackHole 2ch",
+    "configurationNote": "",
+    "codictatePath": "<codictate>",
+    "out": "<run-directory>",
+    "dryRun": false,
+    "preflight": false,
+    "help": false,
+    "settingsVerified": false
+  },
+  "machine": {
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "osBuild": "25G83"
+  },
+  "speedEligible": false,
+  "samples": [
+    {
+      "clipId": "fleurs/da_dk/audio/test/5201915393021401660.wav",
+      "warmup": true,
+      "audioDurationSec": 8.76,
+      "reference": "på bare to uger havde amerikanerne og de frie franske styrker befriet det sydlige frankrig og var ved at fokusere mod tyskland",
+      "hypothesis": "",
+      "wer": {
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 22,
+        "wer": 1,
+        "refWords": 22
+      },
+      "cer": {
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 127,
+        "cer": 1,
+        "refChars": 127
+      },
+      "observation": {
+        "transcript": "",
+        "stopToFirstTextHarnessMs": null,
+        "stopToFirstTextMs": null,
+        "hotkeyEdge": "keydown",
+        "stopToLastTextChangeMs": null,
+        "textChangeCount": 0,
+        "stopToStableTextMs": null,
+        "audioPlaybackMs": 9549.457708,
+        "textChangeSource": "poll",
+        "textChangeBiasMs": 20,
+        "status": "timeout",
+        "timingClock": "monotonic",
+        "outputDeviceRestoreMs": null,
+        "startToStopMs": 12141.298584,
+        "diagnostic": "Dictation produced no committed text before timeout",
+        "stabilityDelayMs": 2000
+      }
+    }
+  ],
+  "aggregate": {
+    "attempted": 0,
+    "succeeded": 0,
+    "wordErrors": 0,
+    "referenceWords": 0,
+    "wer": null
+  }
+}

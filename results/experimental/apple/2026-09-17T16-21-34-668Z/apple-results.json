@@ -1,0 +1,50 @@
+{
+  "format": "apple-dictation-experimental-v1",
+  "product": {
+    "id": "apple-dictation",
+    "label": "Apple Dictation",
+    "version": "26.6.2"
+  },
+  "status": "failed",
+  "createdAt": "2026-09-17T16:21:35.721Z",
+  "config": {
+    "dataset": "da_dk",
+    "locale": "da-DK",
+    "processingMode": "unknown",
+    "stableMs": 2000,
+    "timeoutMs": 45000,
+    "samples": 5,
+    "from": 0,
+    "hotkey": {
+      "keyCode": 7,
+      "modifiers": [
+        "option"
+      ],
+      "spec": "option+x"
+    },
+    "leadMs": 2000,
+    "tailMs": 500,
+    "deviceName": "BlackHole 2ch",
+    "configurationNote": "",
+    "codictatePath": "<codictate>",
+    "out": "<run-directory>",
+    "dryRun": false,
+    "preflight": false,
+    "help": false,
+    "settingsVerified": false
+  },
+  "machine": {
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "osBuild": "25G83"
+  },
+  "speedEligible": false,
+  "samples": [],
+  "aggregate": {
+    "attempted": 0,
+    "succeeded": 0,
+    "wordErrors": 0,
+    "referenceWords": 0,
+    "wer": null
+  }
+}

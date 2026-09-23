@@ -4,7 +4,79 @@ Black-box macOS benchmark for Wispr Flow. It plays Codictate's existing benchmar
 
 Repository stays separate from Codictate because this measures an external product—including audio capture, cloud processing, formatting, personalization, and paste behavior—not a Codictate ASR Harness.
 
-Current scope: Wispr Flow only. `ProductAdapter` keeps runner independent from Flow-specific control without adding unused providers.
+Production scope: Wispr Flow. Apple Dictation has a separate experimental accuracy runner. `ProductAdapter` keeps runner independent from Flow-specific control without adding unused providers.
+
+## Experimental Apple Dictation test
+
+Apple Dictation is **opt-in only** via `benchmark:apple`. The normal `benchmark`,
+`benchmark:publication`, and `scripts/v4-catchup.sh` continue to run their existing
+Flow/Codictate stages and never start Apple Dictation.
+
+This first version measures accuracy, not speed. It uses the same deterministic
+manifests, three reserved warmups, scored offsets, WER and CER as the Flow harness.
+It does not advance production cursors, write publication records, or support resume.
+
+Before testing:
+
+1. Build the bridge: `bun run build:native`. This also creates
+   `native/.build/release/Apple Dictation Receiver.app`. Apple tests launch the
+   executable inside this bundle: the bare command-line receiver accepts the
+   shortcut but Dictation stalls before listening. Preflight checks the bundle
+   identity to catch stale or incorrectly launched builds. Flow keeps its existing
+   command-line bridge.
+2. In **System Settings → Keyboard → Dictation**, enable Dictation, select the
+   desired language/region, choose **BlackHole 2ch** as microphone, and set shortcut
+   to **Option+X**. Finish any language downloads or first-use prompts.
+3. Turn **Voice Control off**. Quit other dictation apps during the Apple test.
+4. Record punctuation settings and whether Keyboard settings say processing is
+   on-device. The runner records your declared locale/settings; it cannot verify
+   them. It does not modify them automatically.
+5. Leave Dictation stopped and keep the benchmark receiver focused during the run.
+   Never run this concurrently with Flow or `v4-catchup`.
+
+```bash
+# Hardware/Accessibility checks only; no Dictation activation.
+bun run benchmark:apple -- --preflight
+
+# Preview the exact clips; no native bridge or audio.
+bun run benchmark:apple -- --dataset da_dk --locale da-DK --samples 5 --dry-run
+
+# Three unscored warmups, then five scored Danish clips.
+bun run benchmark:apple -- --dataset da_dk --locale da-DK --samples 5 \
+  --processing-mode on-device --configuration-note "Auto-punctuation off"
+```
+
+Use `test-clean` or `test-other` with `en-US`, `hu_hu` with `hu-HU`, or `es_419`
+with the specific Spanish region selected in Settings (for example `es-MX`).
+Run one dataset/language at a time; language switching is manual. Do not declare
+Hungarian on-device unless verified on your OS. Use `--from 0 --samples 5` to
+repeat the same five scored clips. No cursor is consumed by these experiments.
+
+Default activation wait is 2000 ms (`--lead-ms`), followed by real-time WAV playback,
+500 ms tail silence, Escape to stop, and 2000 ms text stability confirmation.
+Readiness and the system's finalization state are not exposed by a verified API:
+this remains a smoke-test harness. Composing/marked text is withheld until committed.
+Inspect transcripts for clipped beginnings or premature completion; adjust lead,
+tail and stability waits if needed. No latency figures are eligible for publication.
+
+Apple playback explicitly targets BlackHole instead of making it the system output:
+Dictation can mute other applications on the system output, which otherwise mutes
+the benchmark's audio feed. If BlackHole is already the system output, the runner
+temporarily selects another available output and restores it after the clip.
+Preflight prints the saved macOS Dictation locale and microphone and warns about
+locale mismatches; these undocumented preferences are advisory, not proof of live
+session state. `--locale` records the expected language and does not switch macOS.
+
+To verify receiver packaging without activating Dictation:
+`bun run tests/apple-receiver.manual.ts`.
+
+Results are checkpointed after every clip to
+`results/experimental/apple/<timestamp>/apple-results.json`, with raw transcripts,
+reference text, clip IDs, per-clip WER/CER, pooled WER, status and diagnostics.
+The first timeout/failure stops the experiment; scored failures still count in
+attempted WER. Ctrl-C finishes the current clip, stops Dictation, restores audio
+output, and saves an interrupted run. `--out` can select a fresh output directory;
+an existing `apple-results.json` is never overwritten. See `--help` for all flags.
 
 ## Requirements
 

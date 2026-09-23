@@ -7,6 +7,24 @@ import XCTest
 final class ResponseWindowTests: XCTestCase {
     private let settings = ResponseWindowSettings(stableMs: 750, timeoutMs: 30_000, pollIntervalMs: 10)
 
+    func testTextAlreadyPresentAtStopIsCapturedWithoutANewEdit() {
+        let clock = VirtualClock()
+        let stoppedAt = clock.now()
+        let observation = observeResponseWindow(
+            openedAt: stoppedAt,
+            settings: settings,
+            clock: clock,
+            sleep: { clock.advance(milliseconds: $0 * 1_000) },
+            readSnapshot: { _ in
+                TextChangeSnapshot(text: "already dictated", changeCount: 0,
+                                   firstMeaningfulChangeAt: nil, lastChangeAt: nil)
+            }
+        )
+        XCTAssertEqual(observation.outcome, .stable)
+        XCTAssertEqual(observation.text, "already dictated")
+        XCTAssertGreaterThanOrEqual(clock.now().milliseconds(since: stoppedAt), 750)
+    }
+
     /// Flow pastes at +300ms and corrects itself at +500ms; the harness then waits
     /// 750ms to be sure nothing else is coming. The response metric is 500ms.
     func testStabilityDelayStaysOutOfTheResponseMetric() {

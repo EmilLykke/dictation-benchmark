@@ -9,3 +9,7 @@ results/.selection-cache.json
 # `src/v2-record.ts::isSmokePath`. Letting it into a cursor would advance a published
 # depth by a rehearsal.
 results/smoke/
+
+# Run logs from scripts/v4-night.sh and friends. Console output, not measurements:
+# every measured clip is in results/.
+logs/

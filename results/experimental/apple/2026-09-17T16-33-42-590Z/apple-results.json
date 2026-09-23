@@ -1,0 +1,216 @@
+{
+  "format": "apple-dictation-experimental-v1",
+  "product": {
+    "id": "apple-dictation",
+    "label": "Apple Dictation",
+    "version": "26.6.2"
+  },
+  "status": "completed",
+  "createdAt": "2026-09-17T16:33:43.303Z",
+  "config": {
+    "dataset": "da_dk",
+    "locale": "da-DK",
+    "processingMode": "unknown",
+    "stableMs": 2000,
+    "timeoutMs": 10000,
+    "samples": 1,
+    "from": 0,
+    "hotkey": {
+      "keyCode": 7,
+      "modifiers": [
+        "option"
+      ],
+      "spec": "option+x"
+    },
+    "leadMs": 2000,
+    "tailMs": 1500,
+    "deviceName": "BlackHole 2ch",
+    "configurationNote": "",
+    "codictatePath": "<codictate>",
+    "out": "<run-directory>",
+    "dryRun": false,
+    "preflight": false,
+    "help": false,
+    "settingsVerified": false
+  },
+  "machine": {
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "osBuild": "25G83"
+  },
+  "speedEligible": false,
+  "preflight": {
+    "outputDevices": [
+      "BlackHole 2ch",
+      "MacBook Pro Speakers"
+    ],
+    "receiverBundleIdentifier": "com.codictate.benchmark.apple-receiver",
+    "dictationLocalePreference": "da_DK",
+    "accessibilityTrusted": true,
+    "dictationMicrophonePreference": "BlackHole 2ch",
+    "productRunning": true,
+    "outputDeviceFound": true
+  },
+  "diagnostic": null,
+  "samples": [
+    {
+      "clipId": "fleurs/da_dk/audio/test/5201915393021401660.wav",
+      "warmup": true,
+      "audioDurationSec": 8.76,
+      "reference": "på bare to uger havde amerikanerne og de frie franske styrker befriet det sydlige frankrig og var ved at fokusere mod tyskland",
+      "hypothesis": "Du bare to uger havde amerikanerne og de frie franske styrker befriet sydlige Frankrig og var ved at fokusere på tysk",
+      "wer": {
+        "substitutions": 3,
+        "insertions": 0,
+        "deletions": 1,
+        "wer": 0.18181818181818182,
+        "refWords": 22
+      },
+      "cer": {
+        "substitutions": 5,
+        "insertions": 0,
+        "deletions": 10,
+        "cer": 0.11811023622047244,
+        "refChars": 127
+      },
+      "observation": {
+        "stopToLastTextChangeMs": null,
+        "stopToStableTextMs": null,
+        "hotkeyEdge": "keydown",
+        "textChangeCount": 1,
+        "startToStopMs": 12499.702,
+        "transcript": "Du bare to uger havde amerikanerne og de frie franske styrker befriet sydlige Frankrig og var ved at fokusere på tysk",
+        "stabilityDelayMs": 2000,
+        "stopToFirstTextHarnessMs": null,
+        "textChangeBiasMs": 20,
+        "outputDeviceRestoreMs": 3.345708,
+        "audioPlaybackMs": 8907.930291,
+        "status": "ok",
+        "textChangeSource": "poll",
+        "stopToFirstTextMs": null,
+        "timingClock": "monotonic"
+      }
+    },
+    {
+      "clipId": "fleurs/da_dk/audio/test/10016401698104160032.wav",
+      "warmup": true,
+      "audioDurationSec": 5.1,
+      "reference": "dette er en vigtig måde at skelne mellem nogle verber og objektiver",
+      "hypothesis": "Dette er et vigtigt måde at skelne mellem nogle berbere og",
+      "wer": {
+        "substitutions": 3,
+        "insertions": 0,
+        "deletions": 1,
+        "wer": 0.3333333333333333,
+        "refWords": 12
+      },
+      "cer": {
+        "substitutions": 4,
+        "insertions": 1,
+        "deletions": 10,
+        "cer": 0.22388059701492538,
+        "refChars": 67
+      },
+      "observation": {
+        "stopToLastTextChangeMs": null,
+        "stopToStableTextMs": null,
+        "hotkeyEdge": "keydown",
+        "textChangeCount": 1,
+        "startToStopMs": 8829.170875,
+        "transcript": "Dette er et vigtigt måde at skelne mellem nogle berbere og",
+        "stabilityDelayMs": 2000,
+        "stopToFirstTextHarnessMs": null,
+        "outputDeviceRestoreMs": 8.421666,
+        "textChangeBiasMs": 20,
+        "audioPlaybackMs": 5240.040583,
+        "status": "ok",
+        "stopToFirstTextMs": null,
+        "textChangeSource": "poll",
+        "timingClock": "monotonic"
+      }
+    },
+    {
+      "clipId": "fleurs/da_dk/audio/test/2041213163198696716.wav",
+      "warmup": true,
+      "audioDurationSec": 7.02,
+      "reference": "børn kommer i plejefamilier af en lang række årsager der spænder fra forsømmelse til misbrug og endda afpresning",
+      "hypothesis": "Børn kommer i plejefamilie i en lang række årsager der spænder fra forsømmelse til misbrug og endda afpresning",
+      "wer": {
+        "substitutions": 2,
+        "insertions": 0,
+        "deletions": 0,
+        "wer": 0.1111111111111111,
+        "refWords": 18
+      },
+      "cer": {
+        "substitutions": 1,
+        "insertions": 0,
+        "deletions": 4,
+        "cer": 0.043859649122807015,
+        "refChars": 114
+      },
+      "observation": {
+        "stopToLastTextChangeMs": null,
+        "stopToStableTextMs": null,
+        "hotkeyEdge": "keydown",
+        "textChangeCount": 1,
+        "startToStopMs": 10756.815459,
+        "transcript": "Børn kommer i plejefamilie i en lang række årsager der spænder fra forsømmelse til misbrug og endda afpresning",
+        "stabilityDelayMs": 2000,
+        "stopToFirstTextHarnessMs": null,
+        "textChangeBiasMs": 20,
+        "outputDeviceRestoreMs": 7.936958,
+        "audioPlaybackMs": 7171.933709,
+        "status": "ok",
+        "textChangeSource": "poll",
+        "timingClock": "monotonic",
+        "stopToFirstTextMs": null
+      }
+    },
+    {
+      "clipId": "fleurs/da_dk/audio/test/1064777122682787070.wav",
+      "warmup": false,
+      "audioDurationSec": 12.96,
+      "reference": "der stilles de samme forventninger for ekspertise for virtuelle hold som konventionelle hold men der er små forskelle",
+      "hypothesis": "Jeg stilles de samme forventninger for ekspertise virtuelle folk som konventionelle hold men der er små forskelle",
+      "wer": {
+        "substitutions": 2,
+        "insertions": 0,
+        "deletions": 1,
+        "wer": 0.16666666666666666,
+        "refWords": 18
+      },
+      "cer": {
+        "substitutions": 4,
+        "insertions": 0,
+        "deletions": 6,
+        "cer": 0.08403361344537816,
+        "refChars": 119
+      },
+      "observation": {
+        "stopToLastTextChangeMs": null,
+        "stopToStableTextMs": null,
+        "hotkeyEdge": "keydown",
+        "textChangeCount": 1,
+        "startToStopMs": 16691.473459,
+        "transcript": "Jeg stilles de samme forventninger for ekspertise virtuelle folk som konventionelle hold men der er små forskelle",
+        "stabilityDelayMs": 2000,
+        "stopToFirstTextHarnessMs": null,
+        "textChangeBiasMs": 20,
+        "outputDeviceRestoreMs": 8.954,
+        "audioPlaybackMs": 13105.691625,
+        "status": "ok",
+        "textChangeSource": "poll",
+        "stopToFirstTextMs": null,
+        "timingClock": "monotonic"
+      }
+    }
+  ],
+  "aggregate": {
+    "attempted": 1,
+    "succeeded": 1,
+    "wordErrors": 3,
+    "referenceWords": 18,
+    "wer": 0.16666666666666666
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "format": "apple-dictation-experimental-v1",
+  "product": {
+    "id": "apple-dictation",
+    "label": "Apple Dictation",
+    "version": "26.6.2"
+  },
+  "status": "failed",
+  "createdAt": "2026-09-17T16:28:05.073Z",
+  "config": {
+    "dataset": "test-clean",
+    "locale": "en-GB",
+    "processingMode": "unknown",
+    "stableMs": 2000,
+    "timeoutMs": 5000,
+    "samples": 1,
+    "from": 0,
+    "hotkey": {
+      "keyCode": 7,
+      "modifiers": [
+        "option"
+      ],
+      "spec": "option+x"
+    },
+    "leadMs": 2000,
+    "tailMs": 5000,
+    "deviceName": "BlackHole 2ch",
+    "configurationNote": "",
+    "codictatePath": "<codictate>",
+    "out": "<run-directory>",
+    "dryRun": false,
+    "preflight": false,
+    "help": false,
+    "settingsVerified": false
+  },
+  "machine": {
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "osBuild": "25G83"
+  },
+  "speedEligible": false,
+  "samples": [
+    {
+      "clipId": "librispeech/wav/test-clean/4970-29095-0017.wav",
+      "warmup": true,
+      "audioDurationSec": 3.93,
+      "reference": "THE SIGHT SEERS RETURNED IN HIGH SPIRITS FROM THE CITY",
+      "hypothesis": "",
+      "wer": {
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 10,
+        "wer": 1,
+        "refWords": 10
+      },
+      "cer": {
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 54,
+        "cer": 1,
+        "refChars": 54
+      },
+      "observation": {
+        "textChangeSource": "poll",
+        "stopToLastTextChangeMs": null,
+        "textChangeCount": 0,
+        "stabilityDelayMs": 2000,
+        "stopToStableTextMs": null,
+        "textChangeBiasMs": 20,
+        "transcript": "",
+        "stopToFirstTextHarnessMs": null,
+        "hotkeyEdge": "keydown",
+        "stopToFirstTextMs": null,
+        "status": "timeout",
+        "startToStopMs": 11788.979417,
+        "audioPlaybackMs": 4708.705709,
+        "outputDeviceRestoreMs": null,
+        "diagnostic": "Dictation produced no committed text before timeout",
+        "timingClock": "monotonic"
+      }
+    }
+  ],
+  "aggregate": {
+    "attempted": 0,
+    "succeeded": 0,
+    "wordErrors": 0,
+    "referenceWords": 0,
+    "wer": null
+  }
+}
